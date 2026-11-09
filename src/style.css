@@ -224,3 +224,22 @@ textarea:focus-visible { outline: 3px solid #82a867; outline-offset: 3px; }
 .account-panel p { margin: 8px 0; }
 .account-links { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 10px; }
 .invite-form p { margin-top: 8px; }
+
+.recipe-photo { width: 100%; height: 100%; object-fit: cover; display: block; }
+.recipe-upload-preview { display: block; width: min(100%, 360px); max-height: 200px; object-fit: cover; border-radius: 10px; }
+.nutrition { display: block; margin: 5px 0 10px; font-weight: 650; color: var(--green); }
+.recipe-scopes { margin-bottom: 12px; }
+.housemate, .admin-row { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.housemate-status { display: flex; align-items: baseline; gap: 10px; }
+.housemate .person-form { border-bottom: 0; }
+.admin-grid { display: grid; gap: 14px; }
+.admin-row p, .admin-review { margin: 6px 0; }
+.admin-row form { margin-bottom: 8px; }
+
+.term-picker { position: relative; display: grid; gap: 5px; }
+.term-options { position: absolute; z-index: 2; inset: 100% 0 auto; list-style: none; padding: 4px; margin: 3px 0 0; max-height: 235px; overflow-y: auto; border: 1px solid var(--line); background: var(--paper); border-radius: 8px; box-shadow: 0 5px 16px #1c37221f; }
+.term-options li { display: flex; justify-content: space-between; gap: 8px; padding: 8px; border-radius: 5px; cursor: pointer; }
+.term-options li[aria-selected="true"], .term-options li:hover { background: #e7eddf; }
+.term-options small { flex-shrink: 0; }
+.selected-terms:empty { display: none; }
+.selected-terms .button { min-height: 32px; padding: 3px 8px; }

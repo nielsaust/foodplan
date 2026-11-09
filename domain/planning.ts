@@ -1,5 +1,8 @@
-import type { Recipe } from './catalog.ts'
+import type { Ingredient, Recipe } from './catalog.ts'
 import { ingredientById, recipeById } from './catalog.ts'
+import type { Terms, Tag } from './terms.ts'
+import { convertQuantity } from './units.ts'
+import type { UnitSystem } from './units.ts'
 
 export type Person = { id: string; name: string; factor: number }
 export type Meal = { date: string; recipeId: string }
@@ -7,6 +10,9 @@ export type Extra = { id: string; name: string; checked: boolean }
 export type State = {
   household: { id: string; name: string }
   includeStarterRecipes?: boolean
+  linkedPeople?: string[]
+  customIngredients?: Record<string, Ingredient>
+  customTags?: Record<string, Tag>
   recipeEdits?: Record<string, Recipe>
   people: Person[]
   meals: Meal[]
@@ -17,9 +23,13 @@ export type State = {
 }
 export const householdRecipes = (state: State) => ({ ...(state.includeStarterRecipes === false ? {} : recipeById), ...state.recipeEdits })
 
+export const householdIngredients = (state: State) => ({ ...ingredientById, ...state.customIngredients })
+
 export type Action =
   | { type: 'clearDatabase' }
-  | { type: 'saveRecipe'; recipe: Recipe }
+  | { type: 'copyPublicRecipe'; id: string; copyId: string }
+  | { type: 'deleteRecipe'; id: string }
+  | { type: 'saveRecipe'; recipe: Recipe; terms?: Terms }
   | { type: 'moveMeal'; from: string; to: string; recipeId: string }
   | { type: 'person'; id: string; name: string; factor: number }
   | { type: 'removePerson'; id: string }
@@ -50,12 +60,23 @@ export const diners = (state: State, date: string) =>
 
 export const portions = (people: Person[]) => people.reduce((total, person) => total + person.factor, 0)
 const quantity = new Intl.NumberFormat('nl-NL', { maximumFractionDigits: 2 })
+export function cookingQuantity(value: number, unit: string) {
+  const step = unit === 'teen' ? 1 : unit === 'tl' || unit === 'st.' ? 0.5 : 0
+  return step && value > 0 ? Math.max(step, Math.ceil(value / step - 1e-9) * step) : value
+}
+
+export function ingredientAmount(value: number, unit: string, system: UnitSystem = 'metric', fraction = 1) {
+  const converted = convertQuantity(value, unit, system)
+  const rounded = converted.unit === unit ? cookingQuantity(value, unit) : converted.value
+  return amount(rounded * fraction, converted.unit)
+}
 export const amount = (value: number, unit: string) => quantity.format(value) + ' ' + unit
 
 export const purchaseKey = (id: string, date: string, quantity: number) => JSON.stringify([id, date, quantity])
 
 export function shoppingItems(state: State, start: string, days: number) {
   const catalog = householdRecipes(state)
+  const ingredients = householdIngredients(state)
   const purchased = new Set(state.purchased)
   const totals = new Map<string, { total: number; uses: [string, number][] }>()
   for (const date of datesFrom(start, days)) {
@@ -63,7 +84,7 @@ export function shoppingItems(state: State, start: string, days: number) {
     const scale = portions(diners(state, date))
     if (!meal || !scale) continue
     for (const [id, base] of Object.entries(catalog[meal.recipeId].amounts)) {
-      if (!ingredientById[id].group) continue
+      if (!ingredients[id].group) continue
       const value = base * scale
       if (purchased.has(purchaseKey(id, date, value))) continue
       const entry = totals.get(id) ?? { total: 0, uses: [] }
@@ -74,6 +95,6 @@ export function shoppingItems(state: State, start: string, days: number) {
   }
   return [...totals].map(([id, entry]) => {
     const key = JSON.stringify([id, entry.uses])
-    return { ...ingredientById[id], ...entry, key, checked: state.checked.includes(key) }
+    return { ...ingredients[id], ...entry, key, checked: state.checked.includes(key) }
   }).sort((a, b) => a.name.localeCompare(b.name, 'nl'))
 }

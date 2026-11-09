@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'node:crypto'
 import { promisify } from 'node:util'
 import { InputError } from './store.mjs'
+import { createModeration } from './moderation.mjs'
 import { sendMail } from './mail.mjs'
 
 const derive = promisify(scrypt)
@@ -23,6 +24,9 @@ export class AuthError extends Error {
 const requireLogin = session => {
   if (!session) throw new AuthError(401, 'Log in om verder te gaan.')
   return session
+}
+export function requireSuperuser(session) {
+  if (!requireLogin(session).superuser) throw new AuthError(403, 'Alleen superusers hebben toegang.')
 }
 export function requireOwner(session) {
   if (requireLogin(session).role !== 'owner') throw new AuthError(403, 'Alleen de groepseigenaar kan dit doen.')
@@ -53,6 +57,7 @@ async function passwordHash(password) {
 
 export function createAuth(store, mail = sendMail) {
   const { db } = store
+  const moderation = createModeration(store)
   db.exec(`
     CREATE TABLE IF NOT EXISTS accounts (
       id TEXT PRIMARY KEY,
@@ -68,6 +73,14 @@ export function createAuth(store, mail = sendMail) {
       PRIMARY KEY (account_id, group_id),
       UNIQUE (group_id, person_id)
     );
+    CREATE TABLE IF NOT EXISTS superusers (
+      account_id TEXT PRIMARY KEY REFERENCES accounts(id)
+    );
+    CREATE TABLE IF NOT EXISTS administrative_blocks (
+      kind TEXT NOT NULL CHECK (kind IN ('account', 'group')),
+      id TEXT NOT NULL,
+      PRIMARY KEY (kind, id)
+    );
     CREATE TABLE IF NOT EXISTS sessions (
       hash TEXT PRIMARY KEY,
       account_id TEXT NOT NULL REFERENCES accounts(id),
@@ -81,16 +94,26 @@ export function createAuth(store, mail = sendMail) {
       expires INTEGER NOT NULL
     );
   `)
+  if (!db.prepare('PRAGMA table_info(accounts)').all().some(column => column.name === 'created')) {
+    db.exec('ALTER TABLE accounts ADD COLUMN created INTEGER')
+  }
+  if (!db.prepare('PRAGMA table_info(accounts)').all().some(column => column.name === 'unit_system')) {
+    db.exec("ALTER TABLE accounts ADD COLUMN unit_system TEXT NOT NULL DEFAULT 'metric'")
+  }
+  const rootEmail = (process.env.FOODPLAN_SUPERUSER_EMAIL?.trim() || process.env.FOODPLAN_LEGACY_OWNER_EMAIL?.trim() || '').toLowerCase()
   const publicUrl = new URL(process.env.FOODPLAN_PUBLIC_URL || 'http://localhost:8787')
   const bootstrapEmail = process.env.FOODPLAN_LEGACY_OWNER_EMAIL?.trim().toLowerCase()
   const cookie = (value, seconds) => cookieName + '=' + value +
     '; Path=/; HttpOnly; SameSite=Lax; Max-Age=' + seconds + (publicUrl.protocol === 'https:' ? '; Secure' : '')
   const byEmail = db.prepare('SELECT * FROM accounts WHERE email = ?')
   const findSession = db.prepare(`
-    SELECT a.id, a.email, a.name, m.group_id AS groupId, m.role, m.person_id AS personId
+    SELECT a.id, a.email, a.name, m.group_id AS groupId, m.role, m.person_id AS personId, a.unit_system AS unitSystem,
+           (a.email = ? OR EXISTS (SELECT 1 FROM superusers su WHERE su.account_id = a.id)) AS superuser
     FROM sessions s JOIN accounts a ON a.id = s.account_id
     JOIN group_memberships m ON m.account_id = a.id
     WHERE s.hash = ? AND s.expires > ?
+    AND NOT EXISTS (SELECT 1 FROM administrative_blocks b
+      WHERE (b.kind = 'account' AND b.id = a.id) OR (b.kind = 'group' AND b.id = m.group_id))
   `)
   const findLink = db.prepare('SELECT * FROM account_links WHERE hash = ? AND expires > ?')
   const removeLink = db.prepare('DELETE FROM account_links WHERE hash = ?')
@@ -113,7 +136,8 @@ export function createAuth(store, mail = sendMail) {
   }
   function session(request) {
     const hash = getSessionToken(request)
-    return hash ? findSession.get(hash, Date.now()) : undefined
+    const account = hash ? findSession.get(rootEmail, hash, Date.now()) : undefined
+    return account && { ...account, superuser: !!account.superuser }
   }
   function startSession(accountId) {
     const raw = token()
@@ -134,7 +158,7 @@ export function createAuth(store, mail = sendMail) {
     db.prepare('DELETE FROM account_links WHERE expires <= ?').run(now)
     db.prepare('INSERT INTO account_links VALUES (?, ?, ?, ?, ?)').run(hash, kind, email, JSON.stringify(payload), now + lifetime)
     const url = new URL(publicUrl)
-    url.hash = new URLSearchParams({ action: kind === 'reset' ? 'reset' : 'accept', token: raw }).toString()
+    url.hash = new URLSearchParams({ action: kind === 'reset' ? 'reset' : kind === 'superuser' ? 'accept-superuser' : 'accept', token: raw }).toString()
     try {
       await mail({
         to: email, subject,
@@ -147,11 +171,159 @@ export function createAuth(store, mail = sendMail) {
     }
   }
 
+  function linkedPeople(groupId) {
+    return db.prepare('SELECT person_id AS id FROM group_memberships WHERE group_id = ? AND person_id IS NOT NULL')
+      .all(groupId).map(row => row.id)
+  }
+  function management() {
+    const accounts = db.prepare(`
+      SELECT a.id, a.email, a.name, a.created, m.role, m.group_id AS groupId,
+             EXISTS (SELECT 1 FROM administrative_blocks b WHERE b.kind = 'account' AND b.id = a.id) AS blocked,
+             (a.email = ? OR EXISTS (SELECT 1 FROM superusers su WHERE su.account_id = a.id)) AS superuser,
+             EXISTS (SELECT 1 FROM superusers su WHERE su.account_id = a.id) AS granted
+      FROM accounts a JOIN group_memberships m ON m.account_id = a.id ORDER BY a.created DESC, a.name
+    `).all(rootEmail)
+    const groups = db.prepare(`
+      SELECT g.id, json_extract(g.data, '$.household.name') AS name,
+             EXISTS (SELECT 1 FROM administrative_blocks b WHERE b.kind = 'group' AND b.id = g.id) AS blocked,
+             (SELECT COUNT(*) FROM group_memberships m WHERE m.group_id = g.id) AS members,
+             (SELECT MAX(a.created) FROM group_memberships m JOIN accounts a ON a.id = m.account_id
+              WHERE m.group_id = g.id AND m.role = 'owner') AS created
+      FROM group_states g ORDER BY created DESC, name
+    `).all()
+    return { accounts, groups }
+  }
+  async function authenticate(email, password) {
+    throttle('login:' + email, 8)
+    const account = byEmail.get(email)
+    const [salt, expected] = (account?.password ?? '00000000000000000000000000000000:' + '0'.repeat(128)).split(':')
+    const hash = await derive(passwordInput(password), salt, 64, scryptOptions)
+    if (!timingSafeEqual(hash, Buffer.from(expected, 'hex')) || !account || byEmail.get(email)?.password !== account.password) {
+      throw new AuthError(401, 'E-mailadres of wachtwoord klopt niet.')
+    }
+    const blocked = db.prepare(`
+      SELECT 1 FROM group_memberships m JOIN administrative_blocks b
+        ON (b.kind = 'account' AND b.id = m.account_id) OR (b.kind = 'group' AND b.id = m.group_id)
+      WHERE m.account_id = ?
+    `).get(account.id)
+    if (blocked) throw new AuthError(403, 'Je account of groep is geblokkeerd.')
+    return account
+  }
+
   async function handle(route, body, request, current) {
     // The reverse proxy may share one socket address across visitors.
     const peer = request.socket.remoteAddress || 'unknown'
     if (route !== 'logout') throttle('network:' + route + ':' + peer, 60)
     switch (route) {
+      case 'catalog-export':
+        requireSuperuser(current)
+        return moderation.exportCatalog(body.ids)
+      case 'catalog-import':
+        requireSuperuser(current)
+        return moderation.importCatalog(current.groupId, body.bundle, body.ids)
+      case 'admin-overview':
+        requireSuperuser(current)
+        return { ...management(), publications: moderation.list(), terms: moderation.pendingTerms() }
+      case 'publication-review':
+        requireSuperuser(current)
+        return moderation.review(body.id)
+      case 'publication-decide':
+        requireSuperuser(current)
+        moderation.decide(body)
+        return { message: 'Publicatiestatus opgeslagen.' }
+      case 'term-publish':
+        requireSuperuser(current)
+        moderation.publishTerm(body)
+        return { message: 'De term is gepubliceerd.' }
+      case 'publication-submit':
+        moderation.submit(requireLogin(current).groupId, body.id)
+        return { message: 'Recept ingediend ter beoordeling.' }
+      case 'profile': {
+        const account = requireLogin(current)
+        const name = label(body.name, 40, 'Vul je naam in.')
+        const unitSystem = body.unitSystem ?? account.unitSystem
+        if (unitSystem !== 'metric' && unitSystem !== 'us') throw new InputError('Kies een maatstelsel.')
+        const { state } = store.read(account.groupId)
+        const person = state.people.find(item => item.id === account.personId)
+        const factor = Number(body.factor)
+        if (person && (!Number.isFinite(factor) || factor < 0.25 || factor > 4)) {
+          throw new InputError('Kies een portiefactor tussen 0,25 en 4.')
+        }
+        store.transaction(() => {
+          if (person) store.addGroupPerson(account.groupId, { ...person, name, factor })
+          db.prepare('UPDATE accounts SET name = ?, unit_system = ? WHERE id = ?').run(name, unitSystem, account.id)
+        })
+        return { message: 'Profiel opgeslagen.' }
+      }
+      case 'admin-block': {
+        requireSuperuser(current)
+        const { kind, id, blocked } = body
+        if (!['account', 'group'].includes(kind) || typeof id !== 'string' || typeof blocked !== 'boolean') {
+          throw new InputError('Controleer de ingevulde gegevens.')
+        }
+        const target = kind === 'account' ? db.prepare('SELECT email FROM accounts WHERE id = ?').get(id)
+          : db.prepare('SELECT id FROM group_states WHERE id = ?').get(id)
+        if (!target) throw new InputError('Account of groep bestaat niet.')
+        const root = rootEmail && byEmail.get(rootEmail)
+        const rootGroup = root && db.prepare('SELECT group_id FROM group_memberships WHERE account_id = ?').get(root.id)?.group_id
+        if (blocked && (kind === 'account' ? id === current.id || target.email === rootEmail
+          : id === current.groupId || id === rootGroup)) throw new InputError('Dit account of deze groep kan niet worden geblokkeerd.')
+        store.transaction(() => {
+          if (blocked) {
+            db.prepare('INSERT OR IGNORE INTO administrative_blocks VALUES (?, ?)').run(kind, id)
+            if (kind === 'account') db.prepare('DELETE FROM sessions WHERE account_id = ?').run(id)
+            else db.prepare('DELETE FROM sessions WHERE account_id IN (SELECT account_id FROM group_memberships WHERE group_id = ?)').run(id)
+          } else {
+            db.prepare('DELETE FROM administrative_blocks WHERE kind = ? AND id = ?').run(kind, id)
+          }
+        })
+        return { message: blocked ? 'Geblokkeerd.' : 'Toegang hersteld.' }
+      }
+      case 'admin-rename': {
+        requireSuperuser(current)
+        if (typeof body.id !== 'string') throw new InputError('Kies een groep.')
+        const name = label(body.name, 80, 'Vul een groepsnaam in.')
+        if (!db.prepare("UPDATE group_states SET data = json_set(data, '$.household.name', ?), revision = revision + 1 WHERE id = ?").run(name, body.id).changes) {
+          throw new InputError('Groep bestaat niet.')
+        }
+        return { message: 'Groepsnaam opgeslagen.' }
+      }
+      case 'admin-revoke': {
+        requireSuperuser(current)
+        if (typeof body.id !== 'string') throw new InputError('Kies een account.')
+        const target = db.prepare('SELECT email FROM accounts WHERE id = ?').get(body.id)
+        if (!target || target.email === rootEmail || body.id === current.id) {
+          throw new InputError('Deze beheerrechten kunnen niet worden ingetrokken.')
+        }
+        store.transaction(() => {
+          db.prepare('DELETE FROM superusers WHERE account_id = ?').run(body.id)
+          db.prepare("DELETE FROM account_links WHERE email = ? AND kind = 'superuser'").run(target.email)
+        })
+        return { message: 'Beheerrechten ingetrokken.' }
+      }
+      case 'invite-superuser': {
+        requireSuperuser(current)
+        const email = emailAddress(body.email)
+        throttle('super-invite:' + email, 4)
+        const account = byEmail.get(email)
+        if (!account) throw new InputError('Dit e-mailadres moet eerst een Foodplan-account hebben.')
+        if (email === rootEmail || db.prepare('SELECT 1 FROM superusers WHERE account_id = ?').get(account.id)) {
+          throw new InputError('Dit account is al superuser.')
+        }
+        await sendLink('superuser', email, {}, 'Uitnodiging voor Foodplan-beheer',
+          'Open de link en gebruik je wachtwoord om de beheeruitnodiging te accepteren.', day)
+        return { message: 'Uitnodiging verstuurd.' }
+      }
+      case 'accept-superuser': {
+        const link = readLink(body.token, ['superuser'])
+        const account = await authenticate(link.email, body.password)
+        return store.transaction(() => {
+          readLink(body.token, ['superuser'])
+          db.prepare('INSERT OR IGNORE INTO superusers VALUES (?)').run(account.id)
+          removeLink.run(link.hash)
+          return { headers: startSession(account.id) }
+        })
+      }
       case 'register': {
         const email = emailAddress(body.email)
         const name = label(body.name, 40, 'Vul je naam in.')
@@ -203,7 +375,10 @@ export function createAuth(store, mail = sendMail) {
           const personId = person?.id ?? (matching ? matching.id : randomUUID())
           if (!person && !matching) store.addGroupPerson(groupId, { id: personId, name, factor: 1 })
           const id = randomUUID()
-          db.prepare('INSERT INTO accounts VALUES (?, ?, ?, ?)').run(id, link.email, name, password)
+          if (db.prepare("SELECT 1 FROM administrative_blocks WHERE kind = 'group' AND id = ?").get(groupId)) {
+            throw new InputError('Deze groep is geblokkeerd.')
+          }
+          db.prepare('INSERT INTO accounts (id, email, name, password, created) VALUES (?, ?, ?, ?, ?)').run(id, link.email, name, password, Date.now())
           db.prepare('INSERT INTO group_memberships VALUES (?, ?, ?, ?)').run(id, groupId, link.kind === 'invite' ? 'member' : 'owner', personId)
           removeLink.run(link.hash)
           return { headers: startSession(id) }
@@ -211,13 +386,7 @@ export function createAuth(store, mail = sendMail) {
       }
       case 'login': {
         const email = emailAddress(body.email)
-        throttle('login:' + email, 8)
-        const account = byEmail.get(email)
-        const [salt, expected] = (account?.password ?? '00000000000000000000000000000000:' + '0'.repeat(128)).split(':')
-        const hash = await derive(passwordInput(body.password), salt, 64, scryptOptions)
-        if (!timingSafeEqual(hash, Buffer.from(expected, 'hex')) || !account || byEmail.get(email)?.password !== account.password) {
-          throw new AuthError(401, 'E-mailadres of wachtwoord klopt niet.')
-        }
+        const account = await authenticate(email, body.password)
         return { headers: startSession(account.id) }
       }
       case 'forgot': {
@@ -251,5 +420,5 @@ export function createAuth(store, mail = sendMail) {
       default: throw new AuthError(404, 'Pagina niet gevonden.')
     }
   }
-  return { session, handle }
+  return { session, handle, linkedPeople, moderation }
 }

@@ -1,9 +1,12 @@
+import type { Localized } from './terms.ts'
+
 export type Ingredient = {
   id: string
   name: string
   unit: string
   group: string
   shelfDays?: number
+  translations?: Localized<{ name: string }>
 }
 
 const produce = 'Groente & fruit'
@@ -52,8 +55,12 @@ export type Recipe = {
   cuisine: string
   minutes: number
   theme: string
+  image?: string
   description: string
+  source?: string | null
   tags: string[]
+  tagIds?: string[]
+  translations?: Localized<{ title: string; subtitle: string; cuisine: string; description: string; steps: string[] }>
   amounts: Record<string, number>
   steps: string[]
 }

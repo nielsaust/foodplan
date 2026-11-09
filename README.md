@@ -8,6 +8,18 @@ Een Nederlandstalige weekplanner voor het avondeten. De eerste keer dat je de ap
 docker compose -f compose.local.yaml up --build -d
 ```
 
+Gebruik hetzelfde commando om na een wijziging of `git pull` lokaal bij te werken. Compose bouwt het image en vervangt zo nodig de container. Het databasevolume blijft gekoppeld.
+
+Voor lokale registratie kun je testmail in de Docker-log laten verschijnen. Zet dit in je lokale `.env` en draai het startcommando opnieuw:
+
+```dotenv
+FOODPLAN_LOCAL_MAIL=log
+FOODPLAN_LEGACY_OWNER_EMAIL=niels@example.test
+FOODPLAN_PUBLIC_URL=http://127.0.0.1:8787
+```
+
+Meld je aan met het ingestelde testadres en open de bevestigingslink uit `docker compose -f compose.local.yaml logs --tail 50 app`. Gebruik in de browser hetzelfde adres als in `FOODPLAN_PUBLIC_URL`. Met het ingestelde eigenaaradres neem je de bestaande lokale planning over.
+
 Open [Aan tafel](http://localhost:8787). Hernoem de voorbeeldpersonen via **Huisgenoten**. Gebruik in de weekplanning de personenknop bij een dag om aan te geven wie mee-eet. Klik op een geplande maaltijd voor het geschaalde recept. Houd de titel ingedrukt en sleep naar een vrije dag, of kies een datum via het dagmenu. Via **Recepten** kun je gerechten toevoegen, aanpassen en meerdere kenmerken tegelijk filteren. De recepteditor gebruikt de gedeelde ingrediëntenlijst. Via **Boodschappen** kun je de lijst met instelbare opmaak als tekst kopiëren.
 
 ```sh
@@ -48,6 +60,8 @@ Maak vóór de eerste uitrol van accounts een JSON-back-up via **Instellingen**.
 
 Zet ook `CLOUDFLARE_API_TOKEN`, `EMAIL_FROM_ADDRESS` en `EMAIL_FROM_NAME` in de afgeschermde `.env`. Gebruik een door Cloudflare toegestane afzender. Met `CLOUDFLARE_ACCOUNT_ID` verstuurt de server via de Cloudflare-API. Zonder account-ID gebruikt hij Cloudflare SMTP over TLS. Voor de lokale Compose-configuratie kun je `FOODPLAN_PUBLIC_URL` instellen als je een andere browser-URL dan `http://localhost:8787` gebruikt.
 
+De eerste superuser komt uit `FOODPLAN_SUPERUSER_EMAIL`. Als die ontbreekt, gebruikt Foodplan het geverifieerde account voor `FOODPLAN_LEGACY_OWNER_EMAIL`. Via **Beheer** kan een superuser bestaande accounts uitnodigen voor beheer, accounts en groepen blokkeren en receptpublicaties beoordelen.
+
 Een JSON-back-up uit Instellingen bevat de planningsgegevens van de groep. Voor een volledige serverback-up met accounts en groepslidmaatschappen heb je ook een consistente SQLite-back-up van het Docker-volume nodig.
 
 ### Automatisch deployen met een GitHub-webhook
@@ -82,3 +96,19 @@ Start in een tweede terminal `npm run dev` en open de URL die Vite toont. Vite s
 Huisgenoten hebben een handmatig instelbare portiefactor. De boodschappenlijst telt hoeveelheden uit geplande recepten samen voor de gekozen periode, vermeldt de gebruiksdatums en markeert indicatief wanneer je kort houdbare ingrediënten beter later kunt kopen. Losse boodschappen zijn gedeeld over alle periodes. Vinkjes voor receptingrediënten blijven gekoppeld aan dezelfde gebruiksdatums en hoeveelheden.
 
 Caloriegestuurde porties, accountbeheer, offline synchronisatie en receptenimport vallen buiten deze eerste versie.
+
+Nieuwe ingrediënten en kenmerken worden bij het opslaan van een recept toegevoegd aan
+de eigen groep. Een superuser kan ze onder **Beheer** publiceren. Publiceer eerst de
+privétermen van een recept voordat je het recept zelf goedkeurt.
+
+Onder **Profiel** kies je metrische of Amerikaanse maateenheden. De app rekent de
+weergave van het recept, de bereidingsstappen en de boodschappenlijst om; de
+hoeveelheden en eenheden in het recept blijven opgeslagen zoals ingevoerd. Stuks
+en tenen blijven gelijk. Het datamodel kan vertalingen per taal bewaren, met de
+oorspronkelijke tekst als basis; er is nog geen taalkeuze in de app.
+
+**Beheer → Publieke recepten overzetten** verplaatst geselecteerde recepten
+inclusief hun publieke termen. Importeer op de bestemming als superuser;
+recepten met hetzelfde ID worden overgeslagen. De Docker-volume met SQLite
+blijft per omgeving apart. Voor imports boven de standaardlimiet van nginx
+moet de VPS de bijgewerkte hostconfiguratie gebruiken (10 MB).

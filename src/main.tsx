@@ -1,13 +1,18 @@
+import { emptyTerms, publicBaseTerms } from '../domain/terms'
+import type { Terms } from '../domain/terms'
+import type { UnitSystem } from '../domain/units'
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { ingredientById, recipes as starterRecipes } from '../domain/catalog'
-import type { Recipe } from '../domain/catalog'
-import { addDays, amount, datesFrom, diners, formatDate, householdRecipes, portions, shoppingItems, today, weekStart } from '../domain/planning'
+import { recipes as starterRecipes } from '../domain/catalog'
+import type { Ingredient, Recipe } from '../domain/catalog'
+import { addDays, amount, ingredientAmount, householdIngredients, datesFrom, diners, formatDate, householdRecipes, portions, shoppingItems, today, weekStart } from '../domain/planning'
 import type { Action, Person, State } from '../domain/planning'
 import { Icon, Plate } from './visuals'
 import { AccountScreen, InviteForm, authRequest, hasAccountLink } from './account'
 import type { Account } from './account'
+import { AdminPage } from './admin'
+import { nutrition } from '../domain/nutrition'
 import { RecipeEditor } from './recipe-editor'
 import { useMealDrag } from './meal-drag'
 import './style.css'
@@ -15,8 +20,8 @@ import './style.css'
 declare const __BUILD_TIMESTAMP__: string | null
 
 type Snapshot = { state: State; revision: number }
-type Tab = 'planning' | 'recepten' | 'boodschappen' | 'huisgenoten'
-type Modal = { kind: 'recipe'; id: string; date?: string } | { kind: 'day'; date: string } | { kind: 'edit'; recipe: Recipe; date?: string; isNew?: boolean }
+type Tab = 'planning' | 'recepten' | 'boodschappen' | 'huisgenoten' | 'beheer'
+type Modal = { kind: 'recipe'; id: string; date?: string; publicRecipe?: Recipe } | { kind: 'day'; date: string } | { kind: 'edit'; recipe: Recipe; date?: string; isNew?: boolean }
 const tabs: { id: Tab; label: string; icon: string }[] = [
   { id: 'planning', label: 'Weekplanning', icon: 'calendar' },
   { id: 'recepten', label: 'Recepten', icon: 'book' },
@@ -159,9 +164,20 @@ function Settings({ busy, error, restore, clearDatabase, close }: {
   </Dialog>
 }
 
-function RecipeDetail({ recipe, date, state, save, close, busy, edit }: {
-  recipe: Recipe; date?: string; state: State; save: (action: Action) => Promise<boolean>; close: () => void; busy: boolean; edit: () => void
+function RecipeArt({ recipe }: { recipe: Recipe }) {
+  return recipe.image ? <img className="recipe-photo" src={recipe.image} alt="" loading="lazy"/> : <Plate theme={recipe.theme}/>
+}
+
+function Nutrition({ recipe }: { recipe: Recipe }) {
+  const values = nutrition(recipe)
+  return values ? <small className="nutrition">Ca. {values.kcal} kcal · {values.protein} g eiwit · {values.fiber} g vezels per portie</small> : null
+}
+
+function RecipeDetail({ recipe, date, state, save, close, busy, edit, copy, publish, remove, canPlan, ingredients, unitSystem }: {
+  recipe: Recipe; date?: string; state: State; save: (action: Action) => Promise<boolean>; close: () => void; busy: boolean; edit?: () => void; copy?: () => void; publish?: () => Promise<void>; remove?: () => Promise<void>; canPlan: boolean; ingredients: Record<string, Ingredient>; unitSystem: UnitSystem
 }) {
+  const [publicationMessage, setPublicationMessage] = useState('')
+  const [publishing, setPublishing] = useState(false)
   const [scale, setScale] = useState(date ? portions(diners(state, date)) : 1)
   const [target, setTarget] = useState(date && date >= today() ? date : today())
   const [confirmedRecipe, setConfirmedRecipe] = useState<string>()
@@ -169,8 +185,8 @@ function RecipeDetail({ recipe, date, state, save, close, busy, edit }: {
   const replaces = existing && existing.recipeId !== recipe.id
   const confirm = replaces && existing.recipeId === confirmedRecipe
   const describe = (id: string, fraction = 1) => {
-    const item = ingredientById[id]
-    return amount(recipe.amounts[id] * scale * fraction, item.unit) + ' ' + item.name.toLocaleLowerCase('nl')
+    const item = ingredients[id]
+    return ingredientAmount(recipe.amounts[id] * scale, item.unit, unitSystem, fraction) + ' ' + item.name.toLocaleLowerCase('nl')
   }
   async function plan(event: FormEvent) {
     event.preventDefault()
@@ -178,9 +194,17 @@ function RecipeDetail({ recipe, date, state, save, close, busy, edit }: {
     if (await save({ type: 'meal', date: target, recipeId: recipe.id })) close()
   }
   return <>
-    <div className={'detail-art ' + recipe.theme}><Plate theme={recipe.theme}/></div>
-    <div className="detail-tools"><p className="recipe-meta"><Icon name="clock" size={16}/> {recipe.minutes} min <span>·</span> {recipe.cuisine}</p><button className="button" onClick={edit}><Icon name="edit" size={16}/> Recept aanpassen</button></div>
+    <div className={'detail-art ' + recipe.theme}><RecipeArt recipe={recipe}/></div>
+    <div className="detail-tools"><p className="recipe-meta"><Icon name="clock" size={16}/> {recipe.minutes} min <span>·</span> {recipe.cuisine}</p>{edit && <button className="button" onClick={edit}><Icon name="edit" size={16}/> Recept aanpassen</button>}
+    {remove && <button className="button danger" disabled={busy} onClick={() => {
+      if (window.confirm('Recept verwijderen? Het verdwijnt ook uit de weekplanning. De ingrediënten blijven bewaard.')) void remove()
+    }}>Recept verwijderen</button>}
+      {copy && <button className="button" disabled={busy} onClick={copy}><Icon name="copy" size={16}/> Bewaar als privérecept</button>}
+    </div>
+    <Nutrition recipe={recipe}/>
     <p>{recipe.description}</p>
+    {recipe.source === null && <p className="fine-print">Origineel recept</p>}
+    {recipe.source && <p className="fine-print">Bron: <a href={recipe.source} target="_blank" rel="noreferrer">{new URL(recipe.source).hostname}</a></p>}
     <div className="tags">{recipe.tags.map(tag => <span key={tag}>{tag}</span>)}</div>
     <div className="portion-bar">
       <div><strong>Hoeveelheden</strong><small>{date ? 'Start met de porties van de mee-eters' : 'Het basisrecept is voor één persoon'}</small></div>
@@ -190,18 +214,30 @@ function RecipeDetail({ recipe, date, state, save, close, busy, edit }: {
       }}/> porties</label>
     </div>
     <h3>Ingrediënten</h3>
-    <ul className="ingredients">{Object.entries(recipe.amounts).map(([id, base]) => <li key={id}><span>{ingredientById[id].name}</span><strong>{amount(base * scale, ingredientById[id].unit)}</strong></li>)}</ul>
+    <ul className="ingredients">{Object.entries(recipe.amounts).map(([id, base]) => <li key={id}><span>{ingredients[id].name}</span><strong>{ingredientAmount(base * scale, ingredients[id].unit, unitSystem)}</strong></li>)}</ul>
     <h3>Stap voor stap</h3>
     <ol className="steps">{recipe.steps.map((step, index) => <li key={index}>{step.split(/(\{[^}]+\})/g).map((part, i) => {
       if (!part.startsWith('{')) return part
       const [id, factor] = part.slice(1, -1).split(':')
       return <strong key={i}>{describe(id, factor ? Number(factor) : 1)}</strong>
     })}</li>)}</ol>
-    <form className="form-row dialog-footer" onSubmit={plan}>
+    {canPlan && <form className="form-row dialog-footer" onSubmit={plan}>
       <label>Inplannen op<input type="date" value={target} min={today()} required onChange={event => { setTarget(event.target.value); setConfirmedRecipe(undefined) }}/></label>
       <button className="button primary" disabled={busy}>{confirm ? 'Maaltijd vervangen' : 'Plan dit recept'} <Icon name="calendar" size={17}/></button>
       {confirm && <small className="full-width">Op die dag staat al {householdRecipes(state)[existing.recipeId].title}.</small>}
-    </form>
+    </form>}
+    {publish && <div className="dialog-footer">
+      <button className="button" disabled={publishing || !!publicationMessage} onClick={async () => {
+        setPublishing(true)
+        try {
+          await publish()
+          setPublicationMessage('Een kopie is ingediend voor beoordeling.')
+        } catch (error) {
+          setPublicationMessage(error instanceof Error ? error.message : 'Indienen is niet gelukt.')
+        } finally { setPublishing(false) }
+      }}>Indienen voor publicatie</button>
+      {publicationMessage && <p role="status">{publicationMessage}</p>}
+    </div>}
   </>
 }
 
@@ -231,16 +267,16 @@ function RecipeCards({ recipes, onOpen, filters = false }: { recipes: Recipe[]; 
     </Dialog>}
     <div className="recipe-grid">
       {visible.map(recipe => <button key={recipe.id} className="recipe-card" onClick={() => onOpen(recipe)}>
-        <div className={'recipe-art ' + recipe.theme}><Plate theme={recipe.theme}/><span className="time-pill"><Icon name="clock" size={14}/>{recipe.minutes} min</span></div>
-        <div className="recipe-body"><small>{recipe.cuisine}</small><h3>{recipe.title}</h3><p>{recipe.subtitle}</p><div className="tags"><>{recipe.tags.slice(0, 2).map(tag => <span key={tag}>{tag}</span>)}</><Icon name="arrow" size={18}/></div></div>
+        <div className={'recipe-art ' + recipe.theme}><RecipeArt recipe={recipe}/><span className="time-pill"><Icon name="clock" size={14}/>{recipe.minutes} min</span></div>
+        <div className="recipe-body"><small>{recipe.cuisine}</small><h3>{recipe.title}</h3><p>{recipe.subtitle}</p><Nutrition recipe={recipe}/><div className="tags"><>{recipe.tags.slice(0, 2).map(tag => <span key={tag}>{tag}</span>)}</><Icon name="arrow" size={18}/></div></div>
       </button>)}
     </div>
     {!visible.length && <p className="empty">Geen recepten gevonden.</p>}
   </>
 }
 
-function PersonForm({ person, save, busy }: {
-  person?: Person; save: (action: Action) => Promise<boolean>; busy: boolean
+function PersonForm({ person, save, busy, linked = false }: {
+  person?: Person; save: (action: Action) => Promise<boolean>; busy: boolean; linked?: boolean
 }) {
   const [name, setName] = useState(person?.name ?? '')
   const [factor, setFactor] = useState(String(person?.factor ?? 1))
@@ -255,22 +291,22 @@ function PersonForm({ person, save, busy }: {
     <label>Naam<input value={name} maxLength={40} required placeholder="Naam huisgenoot" onChange={event => setName(event.target.value)}/></label>
     <label>Portiefactor<input type="number" value={factor} min={0.25} max={4} step={0.25} required onChange={event => setFactor(event.target.value)}/></label>
     <button className={'button ' + (person ? '' : 'primary')} disabled={busy}>{person ? 'Opslaan' : 'Toevoegen'}</button>
-    {person && <button type="button" className="button text danger" disabled={busy} onClick={() => {
+    {person && !linked && <button type="button" className="button text danger" disabled={busy} onClick={() => {
       if (removing) void save({ type: 'removePerson', id: person.id })
       else setRemoving(true)
     }}>{removing ? 'Bevestig verwijderen' : 'Verwijderen'}</button>}
   </form>
 }
 
-function ShoppingExport({ items, extras, close }: {
-  items: ReturnType<typeof shoppingItems>; extras: State['extras']; close: () => void
+function ShoppingExport({ items, extras, close, unitSystem }: {
+  items: ReturnType<typeof shoppingItems>; extras: State['extras']; close: () => void; unitSystem: UnitSystem
 }) {
   const [options, setOptions] = useState({ 'Opsommingstekens': true, 'Categorieën': true, 'Hoeveelheden': true, 'Dagen': false })
   const [copyStatus, setCopyStatus] = useState('')
   const rows = [
     ...items.map(item => ({
       group: item.group,
-      text: item.name + (options.Hoeveelheden ? ' — ' + amount(item.total, item.unit) : '') +
+      text: item.name + (options.Hoeveelheden ? ' — ' + ingredientAmount(item.total, item.unit, unitSystem) : '') +
         (options.Dagen ? ' (nodig op ' + item.uses.map(([date]) => formatShort(date)).join(', ') + ')' : ''),
     })),
     ...extras.map(item => ({ group: 'Losse boodschappen', text: item.name })),
@@ -304,7 +340,7 @@ function ShoppingExport({ items, extras, close }: {
   </Dialog>
 }
 
-function Shopping({ state, save, busy }: { state: State; save: (action: Action) => Promise<boolean>; busy: boolean }) {
+function Shopping({ state, save, busy, unitSystem }: { state: State; save: (action: Action) => Promise<boolean>; busy: boolean; unitSystem: UnitSystem }) {
   const [start, setStart] = useState(today)
   const [days, setDays] = useState(3)
   const [extra, setExtra] = useState('')
@@ -333,8 +369,8 @@ function Shopping({ state, save, busy }: { state: State; save: (action: Action) 
           const laterAmount = later.reduce((total, [, quantity]) => total + quantity, 0)
           return <label className={'check-row ' + (item.checked ? 'done' : '')} key={item.key}>
             <input type="checkbox" checked={item.checked} disabled={busy} onChange={event => void save({ type: 'check', key: item.key, checked: event.target.checked, start, days })}/>
-            <span>{item.name}<small>{later.length ? amount(laterAmount, item.unit) + ' later kopen voor ' + later.map(([date]) => formatShort(date)).join(', ') : 'Nodig op ' + item.uses.map(([date]) => formatShort(date)).join(', ')}</small></span>
-            <strong>{amount(item.total, item.unit)}</strong>
+            <span>{item.name}<small>{later.length ? ingredientAmount(laterAmount, item.unit, unitSystem) + ' later kopen voor ' + later.map(([date]) => formatShort(date)).join(', ') : 'Nodig op ' + item.uses.map(([date]) => formatShort(date)).join(', ')}</small></span>
+            <strong>{ingredientAmount(item.total, item.unit, unitSystem)}</strong>
           </label>
         })}
       </section>)}
@@ -354,15 +390,50 @@ function Shopping({ state, save, busy }: { state: State; save: (action: Action) 
       </section>
     </div>
     <div className="export-line"><button className="button" disabled={!total} onClick={() => setExportOpen(true)}><Icon name="copy" size={16}/> Exporteer als tekst</button></div>
-    {exportOpen && <ShoppingExport items={items} extras={state.extras} close={() => setExportOpen(false)}/>}
+    {exportOpen && <ShoppingExport unitSystem={unitSystem} items={items} extras={state.extras} close={() => setExportOpen(false)}/>}
     {!items.length && <p className="empty">Voor deze dagen staan er geen ingrediënten op de boodschappenlijst.</p>}
     <p className="fine-print">Houdbaarheid is een planningsindicatie. Controleer de verpakking en bewaarvoorschriften.</p>
   </>
 }
 
+function Profile({ account, person, close, unitSystem, setUnitSystem }: { account: Account; person?: Person; close: () => void; unitSystem: UnitSystem; setUnitSystem: (value: UnitSystem) => void }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+  return <Dialog title="Profiel" close={close}>
+    <p>{account.email}</p>
+    <form className="form-row" onSubmit={async event => {
+      event.preventDefault()
+      const data = Object.fromEntries(new FormData(event.currentTarget)) as Record<string, string>
+      setBusy(true)
+      setError('')
+      setMessage('')
+      try {
+        setMessage((await authRequest('profile', data)).message ?? '')
+        setUnitSystem(data.unitSystem === 'us' ? 'us' : 'metric')
+      }
+      catch (failure) { setError(failure instanceof Error ? failure.message : 'Opslaan is niet gelukt.') }
+      finally { setBusy(false) }
+    }}>
+      <label>Naam<input name="name" defaultValue={person?.name ?? account.name} required maxLength={40}/></label>
+      {person && <label>Portiefactor<input name="factor" type="number" defaultValue={person.factor} min={0.25} max={4} step={0.25} required/></label>}
+      <label>Maateenheden<select name="unitSystem" defaultValue={unitSystem}><option value="metric">Metrisch (g, ml)</option><option value="us">Amerikaans (oz, cups)</option></select></label>
+      <button className="button primary" disabled={busy}>Profiel opslaan</button>
+    </form>
+    {error && <p className="alert" role="alert">{error}</p>}
+    {message && <p role="status">{message}</p>}
+  </Dialog>
+}
+
 function App({ account, onExpired }: { account: Account; onExpired: () => void }) {
   const { state, save, restore, error, setError, busy } = useHousehold(onExpired)
   const [signingOut, setSigningOut] = useState(false)
+  const [profileOpen, setProfileOpen] = useState(false)
+  const [catalogScope, setCatalogScope] = useState<'public' | 'private'>('public')
+  const [unitSystem, setUnitSystem] = useState<UnitSystem>(account.unitSystem ?? 'metric')
+  const [publishedTerms, setPublishedTerms] = useState<Terms>(emptyTerms)
+  const [publicRecipes, setPublicRecipes] = useState<Recipe[]>(starterRecipes)
+  const [inviting, setInviting] = useState<string>()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [tab, setTab] = useState<Tab>('planning')
   const [week, setWeek] = useState(() => weekStart(today()))
@@ -371,7 +442,27 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
   const catalog = state ? householdRecipes(state) : {}
   const recipes = Object.values(catalog)
   const suggestions = starterRecipes.filter(recipe => Object.hasOwn(catalog, recipe.id)).map(recipe => catalog[recipe.id])
-  const selectedRecipe = modal?.kind === 'recipe' ? catalog[modal.id] : undefined
+  const selectedRecipe = modal?.kind === 'recipe' ? modal.publicRecipe ?? catalog[modal.id] : undefined
+  const isPrivate = modal?.kind === 'recipe' && !modal.publicRecipe && Object.hasOwn(state?.recipeEdits ?? {}, modal.id)
+  const publicTerms = {
+    ingredients: [...publicBaseTerms.ingredients, ...publishedTerms.ingredients],
+    tags: [...publicBaseTerms.tags, ...publishedTerms.tags],
+  }
+  const privateTerms = {
+    ingredients: Object.values(state?.customIngredients ?? {}).filter(term => !publicTerms.ingredients.some(item => item.id === term.id)),
+    tags: Object.values(state?.customTags ?? {}).filter(term => !publicTerms.tags.some(item => item.id === term.id)),
+  }
+  const linkedPeople = new Set(state?.linkedPeople)
+  useEffect(() => {
+    const request = new AbortController()
+    void fetch('/api/catalog', { signal: request.signal }).then(async response => {
+      if (!response.ok) throw new Error('De publieke recepten konden niet worden geladen.')
+      const result: { recipes: Recipe[]; terms: Terms } = await response.json()
+      setPublicRecipes(result.recipes)
+      setPublishedTerms(result.terms ?? emptyTerms)
+    }).catch(failure => { if (!request.signal.aborted) setError(failure.message) })
+    return () => request.abort()
+  }, [tab, modal?.kind === 'edit', setError])
   const dayMeal = modal?.kind === 'day' ? state?.meals.find(meal => meal.date === modal.date) : undefined
   async function moveMeal(from: string, to: string) {
     const recipeId = state?.meals.find(meal => meal.date === from)?.recipeId
@@ -390,9 +481,9 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
   const openRecipe = (recipe: Recipe, date?: string) => setModal({ kind: 'recipe', id: recipe.id, date })
   const close = () => { setError(''); setModal(undefined) }
   const openDay = (date: string) => setModal({ kind: 'day', date })
-  const newRecipe = () => setModal({ kind: 'edit', isNew: true, recipe: {
-    id: newId(), title: '', subtitle: '', cuisine: '', description: '', minutes: 30, tags: [], theme: 'green', amounts: {}, steps: [''],
-  } })
+  const newRecipe = () => { setCatalogScope('private'); setModal({ kind: 'edit', isNew: true, recipe: {
+    id: newId(), title: '', subtitle: '', cuisine: '', description: '', source: null, minutes: 30, tags: [], theme: 'green', amounts: {}, steps: [''],
+  } }) }
 
   return <>
     <header className="site-header"><div className="header-inner">
@@ -452,24 +543,41 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
       </>}
       {state && tab === 'recepten' && <>
         <div className="page-heading"><div className="eyebrow"><Icon name="book" size={16}/> Het receptenboek</div><h1>Recepten</h1><p>Vind en filter recepten, voeg je eigen gerechten toe of pas een recept aan.</p><button className="button primary new-recipe" onClick={newRecipe}><Icon name="plus" size={17}/> Recept toevoegen</button></div>
-        <RecipeCards recipes={recipes} onOpen={openRecipe} filters/>
+        <div className="form-row recipe-scopes" aria-label="Receptverzameling">
+          <button className={'button ' + (catalogScope === 'public' ? 'primary' : '')} aria-pressed={catalogScope === 'public'} onClick={() => setCatalogScope('public')}>Publieke recepten</button>
+          <button className={'button ' + (catalogScope === 'private' ? 'primary' : '')} aria-pressed={catalogScope === 'private'} onClick={() => setCatalogScope('private')}>Privérecepten van je groep</button>
+        </div>
+        <RecipeCards recipes={catalogScope === 'public' ? publicRecipes : Object.values(state.recipeEdits ?? {})}
+          onOpen={recipe => catalogScope === 'public' ? setModal({ kind: 'recipe', id: recipe.id, publicRecipe: recipe }) : openRecipe(recipe)} filters/>
         <p className="fine-print">Kies glutenvrije verpakkingen waar nodig, ook bij linzen en kruidenmixen. <a href="https://www.voedingscentrum.nl/encyclopedie/gluten-en-het-glutenvrij-dieet.aspx" target="_blank" rel="noreferrer">Voedingscentrum</a></p>
       </>}
-      {state && tab === 'boodschappen' && <Shopping state={state} save={save} busy={busy}/>}
+      {state && tab === 'boodschappen' && <Shopping unitSystem={unitSystem} state={state} save={save} busy={busy}/>}
       {state && tab === 'huisgenoten' && <>
         <div className="page-heading"><div className="eyebrow"><Icon name="people" size={16}/> {state.household.name}</div><h1>Huisgenoten</h1><p>Beheer wie er mee-eet. Portiefactor 1 is één standaardportie.</p></div>
-        <section className="panel people-panel"><h2>Jouw huishouden</h2>{state.people.map(person => <PersonForm key={person.id + person.name + person.factor} person={person} save={save} busy={busy}/>)}
-          {!state.people.length && <p>Voeg hieronder je eerste huisgenoot toe.</p>}
-          <h3>Huisgenoot toevoegen</h3><PersonForm save={save} busy={busy}/>
-          {account.role === 'owner' && <><h3>Uitnodigen voor {state.household.name}</h3><InviteForm people={state.people.filter(person => person.id !== account.personId)}/></>}
+        <section className="panel people-panel"><h2>Jouw huishouden</h2>
+          {state.people.map(person => <article className="housemate" key={person.id + person.name + person.factor}>
+            <div className="housemate-status"><strong>{person.name}</strong><small>{linkedPeople.has(person.id) ? 'Account gekoppeld' : 'Zonder account'}</small></div>
+            {account.role === 'owner' ? <>
+              <PersonForm person={person} save={save} busy={busy} linked={linkedPeople.has(person.id)}/>
+              {!linkedPeople.has(person.id) && <button className="button text" onClick={() => setInviting(inviting === person.id ? undefined : person.id)}>
+                {inviting === person.id ? 'Uitnodiging sluiten' : 'Nodig ' + person.name + ' uit'}
+              </button>}
+              {inviting === person.id && !linkedPeople.has(person.id) && <InviteForm person={person}/>}
+            </> : <small>Portiefactor {person.factor.toLocaleString('nl-NL')}</small>}
+          </article>)}
+          {!state.people.length && <p>Er zijn nog geen huisgenoten.</p>}
+          {account.role === 'owner' && <><h3>Huisgenoot toevoegen</h3><PersonForm save={save} busy={busy}/></>}
         </section>
       </>}
+      {tab === 'beheer' && account.superuser && <AdminPage accountId={account.id} groupId={account.groupId}/>}
     </main>
     <footer className="site-footer">
       <span className="footer-brand"><Icon name="leaf" size={16}/> Aan tafel · Jouw weekmenu</span>
       {account.role === 'owner' && <button className="button text" disabled={!state} onClick={() => { setError(''); setSettingsOpen(true) }}>
         <Icon name="settings" size={17}/> Instellingen
       </button>}
+      <button className="button text" disabled={!state} onClick={() => setProfileOpen(true)}>Profiel</button>
+      {account.superuser && <button className="button text" onClick={() => navigate('beheer')}>Beheer</button>}
       <button className="button text" disabled={busy || signingOut} onClick={async () => {
         setSigningOut(true)
         try {
@@ -482,17 +590,27 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
         }
       }}>Uitloggen</button>
     </footer>
+    {profileOpen && state && <Profile unitSystem={unitSystem} setUnitSystem={setUnitSystem} account={account} person={state.people.find(person => person.id === account.personId)} close={() => setProfileOpen(false)}/>}
     {settingsOpen && <Settings busy={busy} error={error} restore={restore} clearDatabase={() => save({ type: 'clearDatabase' })} close={() => { setError(''); setSettingsOpen(false) }}/>}
     {state && modal && <Dialog key={modal.kind} title={modal.kind === 'recipe' ? selectedRecipe?.title ?? 'Recept' : modal.kind === 'edit' ? (modal.isNew ? 'Recept toevoegen' : 'Recept aanpassen') : formatLong(modal.date)} close={close}>
       {error && <p className="alert" role="alert">{error}</p>}
-      {modal.kind === 'recipe' && selectedRecipe && <RecipeDetail recipe={selectedRecipe} date={modal.date} state={state} save={save} close={close} busy={busy}
-        edit={() => setModal({ kind: 'edit', recipe: selectedRecipe, date: modal.date })}/>}
-      {modal.kind === 'edit' && <RecipeEditor recipe={modal.recipe} busy={busy} cancel={() => {
+      {modal.kind === 'recipe' && selectedRecipe && <RecipeDetail key={selectedRecipe.id} recipe={selectedRecipe} unitSystem={unitSystem} ingredients={modal.publicRecipe ? Object.fromEntries(publicTerms.ingredients.map(item => [item.id, item])) : householdIngredients(state)} canPlan={isPrivate || catalog[selectedRecipe.id] === selectedRecipe || (starterRecipes.some(recipe => recipe.id === selectedRecipe.id) && !!catalog[selectedRecipe.id] && !Object.hasOwn(state.recipeEdits ?? {}, selectedRecipe.id))} date={modal.date} state={state} save={save} close={close} busy={busy}
+        remove={isPrivate ? async () => { if (await save({ type: 'deleteRecipe', id: selectedRecipe.id })) close() } : undefined}
+        edit={isPrivate ? () => setModal({ kind: 'edit', recipe: selectedRecipe, date: modal.date }) : undefined}
+        publish={isPrivate ? async () => { await authRequest('publication-submit', { id: selectedRecipe.id }) } : undefined}
+        copy={!isPrivate ? async () => {
+          const copyId = newId()
+          if (await save({ type: 'copyPublicRecipe', id: selectedRecipe.id, copyId })) {
+            setCatalogScope('private')
+            setModal({ kind: 'recipe', id: copyId })
+          }
+        } : undefined}/>}
+      {modal.kind === 'edit' && <RecipeEditor publicTerms={publicTerms} privateTerms={privateTerms} recipe={modal.recipe} busy={busy} cancel={() => {
         setError('')
         if (modal.isNew) close()
         else openRecipe(modal.recipe, modal.date)
-      }} onSave={async recipe => {
-        if (await save({ type: 'saveRecipe', recipe })) openRecipe(recipe, modal.date)
+      }} onSave={async (recipe, terms) => {
+        if (await save({ type: 'saveRecipe', recipe, terms })) openRecipe(recipe, modal.date)
       }}/>}
       {modal.kind === 'day' && <>
         <h3>Mee-eters</h3>

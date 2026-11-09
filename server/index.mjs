@@ -8,6 +8,9 @@ import { InputError, openStore } from './store.mjs'
 
 const store = openStore(process.env.DATABASE_PATH || 'data/aan-tafel.sqlite')
 const auth = createAuth(store)
+function groupSnapshot(groupId, snapshot = store.read(groupId)) {
+  return { ...snapshot, state: { ...snapshot.state, linkedPeople: auth.linkedPeople(groupId) } }
+}
 const root = resolve('dist')
 const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' }
 const json = (response, status, data, headers = {}) => {
@@ -24,6 +27,10 @@ const server = createServer(async (request, response) => {
     if (path === '/api/auth/session' && request.method === 'GET') {
       return json(response, 200, { account: auth.session(request) ?? null })
     }
+    if (path === '/api/catalog' && request.method === 'GET') {
+      if (!auth.session(request)) throw new AuthError(401, 'Log in om verder te gaan.')
+      return json(response, 200, { recipes: auth.moderation.publicRecipes(), terms: store.publicTerms() })
+    }
     const authRoute = path.startsWith('/api/auth/') ? path.slice('/api/auth/'.length) : ''
     const restore = path === '/api/backup'
     const groupRoute = path === '/api/state' || restore
@@ -32,7 +39,7 @@ const server = createServer(async (request, response) => {
     if (restore) requireOwner(account)
     if (groupRoute && request.method === 'GET') {
       const snapshot = store.read(account.groupId)
-      if (!restore) return json(response, 200, snapshot)
+      if (!restore) return json(response, 200, groupSnapshot(account.groupId, snapshot))
       return json(response, 200, { format: 'aan-tafel', version: 1, state: snapshot.state }, {
         'Content-Disposition': `attachment; filename="aan-tafel-${today()}.json"`,
       })
@@ -41,7 +48,7 @@ const server = createServer(async (request, response) => {
       if (request.headers['content-type'] !== 'application/json' || request.headers['sec-fetch-site'] === 'cross-site') {
         return json(response, 415, { error: 'Verstuur gegevens als JSON vanaf deze app.' })
       }
-      const limit = restore ? 10 * 1024 * 1024 : authRoute ? 8192 : 65536
+      const limit = (restore || authRoute === 'catalog-import') ? 10 * 1024 * 1024 : authRoute ? 8192 : 256 * 1024
       let body = ''
       for await (const part of request.setEncoding('utf8')) {
         body += part
@@ -51,11 +58,20 @@ const server = createServer(async (request, response) => {
       try { action = JSON.parse(body) } catch { throw new InputError('Ongeldige invoer.') }
       if (authRoute) {
         if (!action || typeof action !== 'object' || Array.isArray(action)) throw new InputError('Ongeldige invoer.')
-        const { headers, ...result } = await auth.handle(authRoute, action, request, account)
+        const { headers, ...result } = await auth.handle(authRoute, action, request, auth.session(request))
         return json(response, 200, result, headers)
       }
-      if (action?.type === 'clearDatabase') requireOwner(account)
-      return json(response, 200, store.write(account.groupId, action, restore))
+      const current = auth.session(request)
+      if (!current) throw new AuthError(401, 'Log in om verder te gaan.')
+      if (restore || ['clearDatabase', 'person', 'removePerson'].includes(action?.type)) requireOwner(current)
+      if (!restore && action?.type === 'removePerson' && auth.linkedPeople(current.groupId).includes(action.id)) {
+        throw new InputError('Deze huisgenoot heeft een gekoppeld account.')
+      }
+      if (!restore && action?.type === 'copyPublicRecipe') {
+        auth.moderation.copy(current.groupId, action)
+        return json(response, 200, groupSnapshot(current.groupId))
+      }
+      return json(response, 200, groupSnapshot(current.groupId, store.write(current.groupId, action, restore)))
     }
 
     const file = resolve(root, '.' + (path === '/' ? '/index.html' : path))

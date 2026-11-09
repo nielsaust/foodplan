@@ -2,6 +2,8 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { ingredientById, recipes } from '../domain/catalog.ts'
+import { baseTags, emptyTerms, nameKey } from '../domain/terms.ts'
+import { isUnit } from '../domain/units.ts'
 import { addDays, datesFrom, diners, householdRecipes, purchaseKey, shoppingItems, today, weekStart } from '../domain/planning.ts'
 
 const nameOk = (value, max) => typeof value === 'string' && value.trim().length > 0 && value.trim().length <= max
@@ -14,20 +16,111 @@ function requireInput(valid) {
 }
 export class InputError extends Error {}
 
-function validateRecipe(recipe) {
+const record = value => value && typeof value === 'object' && !Array.isArray(value)
+const baseTagById = Object.fromEntries(baseTags.map(tag => [tag.id, tag]))
+
+function localized(value, fields) {
+  if (value === undefined) return true
+  if (!record(value) || Object.keys(value).length > 30) return false
+  return Object.entries(value).every(([locale, translation]) =>
+    /^[a-z]{2,3}(?:-[a-zA-Z0-9]{2,8})*$/.test(locale) && record(translation) &&
+    Object.entries(translation).every(([field, text]) =>
+      Object.hasOwn(fields, field) && fields[field](text)))
+}
+
+const recipeTranslationFields = {
+  title: value => nameOk(value, 100),
+  subtitle: value => typeof value === 'string' && value.length <= 160,
+  cuisine: value => nameOk(value, 80),
+  description: value => nameOk(value, 1600),
+  steps: value => Array.isArray(value) && value.length <= 30 && value.every(step => nameOk(step, 600)),
+}
+
+export function validateTerm(term, kind) {
+  const ingredient = kind === 'ingredient'
+  requireInput(record(term) && typeof term.id === 'string' && new RegExp('^' + kind + '-[a-f0-9]{32}$').test(term.id) &&
+    nameOk(term.name, ingredient ? 80 : 40) && localized(term.translations, { name: value => nameOk(value, ingredient ? 80 : 40) }) && (!ingredient || (typeof term.unit === 'string' && isUnit(term.unit))))
+  return ingredient
+    ? { id: term.id, name: term.name.trim(), unit: term.unit, group: 'Overige ingrediënten', translations: term.translations }
+    : { id: term.id, name: term.name.trim(), translations: term.translations }
+}
+
+function readTerms(value, kind) {
+  if (value === undefined) return {}
+  requireInput(record(value))
+  return Object.fromEntries(Object.entries(value).map(([id, term]) => {
+    requireInput(term?.id === id)
+    return [id, validateTerm(term, kind)]
+  }))
+}
+
+function prepareTerms(state, recipe, additions, publicTerms) {
+  requireInput(record(recipe) && record(recipe.amounts) && (recipe.tagIds === undefined || Array.isArray(recipe.tagIds)))
+  const customIngredients = { ...state.customIngredients }
+  const customTags = { ...state.customTags }
+  const availableIngredients = { ...ingredientById, ...customIngredients, ...Object.fromEntries(publicTerms.ingredients.map(item => [item.id, item])) }
+  const availableTags = { ...baseTagById, ...customTags, ...Object.fromEntries(publicTerms.tags.map(item => [item.id, item])) }
+  requireInput(record(additions) && Array.isArray(additions.ingredients) && additions.ingredients.length <= 50 &&
+    Array.isArray(additions.tags) && additions.tags.length <= 20)
+  for (const entry of additions.ingredients) {
+    const term = validateTerm(entry, 'ingredient')
+    requireInput(!Object.hasOwn(availableIngredients, term.id) && Object.hasOwn(recipe.amounts, term.id))
+    if (Object.values(availableIngredients).some(item => nameKey(item.name) === nameKey(term.name))) {
+      throw new InputError('Dit ingrediënt bestaat al. Kies het uit de suggesties.')
+    }
+    availableIngredients[term.id] = term
+  }
+  for (const entry of additions.tags) {
+    const term = validateTerm(entry, 'tag')
+    requireInput(!Object.hasOwn(availableTags, term.id) && recipe.tagIds?.includes(term.id))
+    if (Object.values(availableTags).some(item => nameKey(item.name) === nameKey(term.name))) {
+      throw new InputError('Dit kenmerk bestaat al. Kies het uit de suggesties.')
+    }
+    availableTags[term.id] = term
+  }
+  validateRecipe(recipe, availableIngredients, availableTags)
+  for (const id of Object.keys(recipe.amounts)) {
+    if (!Object.hasOwn(ingredientById, id)) customIngredients[id] = availableIngredients[id]
+  }
+  for (const id of recipe.tagIds ?? []) {
+    if (!Object.hasOwn(baseTagById, id)) customTags[id] = availableTags[id]
+  }
+  state.customIngredients = customIngredients
+  state.customTags = customTags
+  return recipe.tagIds ? { ...recipe, tags: recipe.tagIds.map(id => availableTags[id].name) } : recipe
+}
+
+function validSource(source) {
+  if (source === null || source === undefined) return true
+  if (!nameOk(source, 2048)) return false
+  try {
+    const url = new URL(source)
+    return ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password
+  } catch { return false }
+}
+
+export function validateRecipe(recipe, ingredients = ingredientById, tags = baseTagById) {
   requireInput(recipe && idOk(recipe.id) && nameOk(recipe.title, 100) &&
     typeof recipe.subtitle === 'string' && recipe.subtitle.length <= 160 &&
-    nameOk(recipe.cuisine, 80) && nameOk(recipe.description, 1600) &&
+    nameOk(recipe.cuisine, 80) && nameOk(recipe.description, 1600) && validSource(recipe.source) &&
     Number.isInteger(recipe.minutes) && recipe.minutes >= 1 && recipe.minutes <= 600 &&
     ['gold', 'rose', 'green'].includes(recipe.theme) &&
+    (recipe.image === undefined || (typeof recipe.image === 'string' && recipe.image.length <= 140000 &&
+      /^data:image\/webp;base64,[A-Za-z0-9+/]+={0,2}$/.test(recipe.image) &&
+      Buffer.from(recipe.image.split(',')[1], 'base64').toString('ascii', 8, 12) === 'WEBP')) &&
     Array.isArray(recipe.tags) && recipe.tags.length <= 20 && recipe.tags.every(tag => nameOk(tag, 40)) &&
+    (recipe.tagIds === undefined || (Array.isArray(recipe.tagIds) && recipe.tagIds.length <= 20 &&
+      recipe.tagIds.every(id => typeof id === 'string' && Object.hasOwn(tags, id)) &&
+      new Set(recipe.tagIds).size === recipe.tagIds.length)) &&
     recipe.amounts && typeof recipe.amounts === 'object' && !Array.isArray(recipe.amounts) &&
     Object.keys(recipe.amounts).length > 0 && Object.entries(recipe.amounts).every(([id, value]) =>
-      Object.hasOwn(ingredientById, id) && Number.isFinite(value) && value > 0 && value <= 10000) &&
+      Object.hasOwn(ingredients, id) && Number.isFinite(value) && value > 0 && value <= 10000) &&
+    localized(recipe.translations, recipeTranslationFields) &&
     Array.isArray(recipe.steps) && recipe.steps.length > 0 && recipe.steps.length <= 30 &&
     recipe.steps.every(step => nameOk(step, 600)))
-  for (const step of recipe.steps) {
-    const remaining = step.replace(/\{([a-z-]+)(?::(\d+(?:\.\d+)?))?\}/g, (_, id, factor) => {
+  const translatedSteps = Object.values(recipe.translations ?? {}).flatMap(translation => translation.steps ?? [])
+  for (const step of [...recipe.steps, ...translatedSteps]) {
+    const remaining = step.replace(/\{([a-z0-9-]+)(?::(\d+(?:\.\d+)?))?\}/g, (_, id, factor) => {
       if (!Object.hasOwn(recipe.amounts, id) || (factor !== undefined && !(Number(factor) > 0 && Number(factor) <= 1))) {
         throw new InputError('Gebruik in de stappen alleen verwijzingen naar gekozen ingrediënten.')
       }
@@ -38,7 +131,6 @@ function validateRecipe(recipe) {
 }
 
 function importState(backup) {
-  const record = value => value && typeof value === 'object' && !Array.isArray(value)
   const unique = (values, key) => new Set(values.map(key)).size === values.length
   if (backup?.format !== 'aan-tafel' || backup.version !== 1 || !record(backup.state)) {
     throw new InputError('Kies een geldig Aan tafel-back-upbestand.')
@@ -53,11 +145,13 @@ function importState(backup) {
   ) && unique(people, person => person.id))
   const peopleIds = new Set(people.map(person => person.id))
 
+  const customIngredients = readTerms(backup.state.customIngredients, 'ingredient')
+  const customTags = readTerms(backup.state.customTags, 'tag')
   if (recipeEdits !== undefined) {
     requireInput(record(recipeEdits))
     for (const [id, recipe] of Object.entries(recipeEdits)) {
       requireInput(recipe?.id === id)
-      validateRecipe(recipe)
+      validateRecipe(recipe, { ...ingredientById, ...customIngredients }, { ...baseTagById, ...customTags })
     }
   }
   const catalog = householdRecipes({ recipeEdits, includeStarterRecipes })
@@ -72,16 +166,16 @@ function importState(backup) {
   requireInput(Array.isArray(extras) && extras.every(extra =>
     record(extra) && idOk(extra.id) && nameOk(extra.name, 100) && typeof extra.checked === 'boolean'
   ) && unique(extras, extra => extra.id))
-  return { household, people, meals, attendance, checked, purchased, extras, recipeEdits, includeStarterRecipes }
+  return { household, people, meals, attendance, checked, purchased, extras, recipeEdits, includeStarterRecipes, customIngredients, customTags }
 }
 
-function apply(state, action) {
+function apply(state, action, publicTerms = emptyTerms) {
   requireInput(action && typeof action === 'object')
   switch (action.type) {
     case 'clearDatabase':
       Object.assign(state, {
         people: [], meals: [], attendance: {}, checked: [], purchased: [], extras: [],
-        recipeEdits: {}, includeStarterRecipes: false,
+        recipeEdits: {}, customIngredients: {}, customTags: {}, includeStarterRecipes: false,
       })
       break
     case 'person': {
@@ -100,13 +194,28 @@ function apply(state, action) {
         state.attendance[date] = state.attendance[date].filter(id => id !== action.id)
       }
       break
+    case 'deleteRecipe': {
+      requireInput(typeof action.id === 'string' && Object.hasOwn(state.recipeEdits ?? {}, action.id))
+      const dates = new Set(state.meals.filter(meal => meal.recipeId === action.id).map(meal => meal.date))
+      const keep = (key, isPurchase) => {
+        try {
+          const [, uses] = JSON.parse(key)
+          return isPurchase ? !dates.has(uses) : !Array.isArray(uses) || !uses.some(use => dates.has(use?.[0]))
+        } catch { return true }
+      }
+      state.checked = state.checked.filter(key => keep(key, false))
+      state.purchased = (state.purchased ?? []).filter(key => keep(key, true))
+      delete state.recipeEdits[action.id]
+      state.meals = state.meals.filter(meal => meal.recipeId !== action.id)
+      break
+    }
     case 'saveRecipe': {
-      const recipe = action.recipe
-      validateRecipe(recipe)
-      const { id, title, subtitle, cuisine, description, minutes, theme, tags, amounts, steps } = recipe
+      const recipe = prepareTerms(state, action.recipe, action.terms ?? emptyTerms, publicTerms)
+      requireInput(!recipes.some(starter => starter.id === recipe.id) || Object.hasOwn(state.recipeEdits ?? {}, recipe.id))
+      const { image, id, title, subtitle, cuisine, description, minutes, theme, tags, tagIds, amounts, steps, translations, source } = recipe
       state.recipeEdits = { ...state.recipeEdits, [id]: {
-        id, title: title.trim(), subtitle: subtitle.trim(), cuisine: cuisine.trim(),
-        description: description.trim(), minutes, theme,
+        id, image, tagIds, translations, title: title.trim(), subtitle: subtitle.trim(), cuisine: cuisine.trim(),
+        description: description.trim(), source: source?.trim() ?? source, minutes, theme,
         tags: [...new Set(tags.map(tag => tag.trim()))], amounts, steps: steps.map(step => step.trim()),
       } }
       break
@@ -193,6 +302,11 @@ export function openStore(file) {
     PRAGMA busy_timeout = 5000;
     PRAGMA journal_mode = WAL;
     PRAGMA foreign_keys = ON;
+    CREATE TABLE IF NOT EXISTS public_terms (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL CHECK (kind IN ('ingredient', 'tag')),
+      data TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS group_states (
       id TEXT PRIMARY KEY,
       revision INTEGER NOT NULL DEFAULT 0,
@@ -238,6 +352,13 @@ export function openStore(file) {
     const row = select.get(groupId)
     return { revision: row.revision, state: JSON.parse(row.data) }
   }
+  function publicTerms() {
+    const terms = { ingredients: [], tags: [] }
+    for (const row of db.prepare('SELECT kind, data FROM public_terms').all()) {
+      terms[row.kind === 'ingredient' ? 'ingredients' : 'tags'].push(JSON.parse(row.data))
+    }
+    return terms
+  }
   function transaction(callback) {
     db.exec('BEGIN IMMEDIATE')
     try {
@@ -265,7 +386,7 @@ export function openStore(file) {
   })
 
   return {
-    db, transaction, legacyGroupId, read,
+    db, transaction, legacyGroupId, read, publicTerms,
     createGroup(groupId, name) {
       insert.run(groupId, 0, JSON.stringify({
         household: { id: groupId, name }, people: [], meals: [], attendance: {}, checked: [], extras: [],
@@ -276,7 +397,10 @@ export function openStore(file) {
         const { state, revision } = read(groupId)
         const next = restore ? importState(action) : state
         if (restore) next.household = state.household
-        else apply(next, action)
+        else apply(next, action, action?.type === 'saveRecipe' ? publicTerms() : undefined)
+        if (!restore && action.type === 'deleteRecipe' && db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'recipe_publications'").get()) {
+          db.prepare("DELETE FROM recipe_publications WHERE group_id = ? AND recipe_id = ? AND status = 'pending'").run(groupId, action.id)
+        }
         update.run(JSON.stringify(next), groupId)
         return { state: next, revision: revision + 1 }
       })
