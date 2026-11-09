@@ -10,6 +10,8 @@ import { RecipeEditor } from './recipe-editor'
 import { useMealDrag } from './meal-drag'
 import './style.css'
 
+declare const __BUILD_TIMESTAMP__: string | null
+
 type Snapshot = { state: State; revision: number }
 type Tab = 'planning' | 'recepten' | 'boodschappen' | 'huisgenoten'
 type Modal = { kind: 'recipe'; id: string; date?: string } | { kind: 'day'; date: string } | { kind: 'edit'; recipe: Recipe; date?: string; isNew?: boolean }
@@ -92,6 +94,11 @@ function Settings({ busy, error, restore, clearDatabase, close }: {
   const fileInput = useRef<HTMLInputElement>(null)
 
   return <Dialog title="Instellingen" close={() => { if (!pending) close() }}>
+    {__BUILD_TIMESTAMP__ && <p>Laatste update · <time dateTime={__BUILD_TIMESTAMP__}>
+      {new Intl.DateTimeFormat('nl-NL', {
+        dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/Amsterdam',
+      }).format(new Date(__BUILD_TIMESTAMP__))}
+    </time></p>}
     <h3>Database exporteren</h3>
     <p>Download een JSON-back-up van je recepten, planning, huisgenoten en boodschappen.</p>
     <a className="button backup-link" href="/api/backup" download>Download back-up</a>
