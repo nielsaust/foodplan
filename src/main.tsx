@@ -446,7 +446,7 @@ function App() {
       </>}
       {state && tab === 'boodschappen' && <Shopping state={state} save={save} busy={busy}/>}
       {state && tab === 'huisgenoten' && <>
-        <div className="page-heading"><div className="eyebrow"><Icon name="people" size={16}/> Wie eet er mee?</div><h1>Huisgenoten</h1><p>Vervang de drie voorbeeldpersonen door jullie eigen namen. Portiefactor 1 is één standaardportie.</p></div>
+        <div className="page-heading"><div className="eyebrow"><Icon name="people" size={16}/> {state.household.name}</div><h1>Huisgenoten</h1><p>Beheer wie er mee-eet. Portiefactor 1 is één standaardportie.</p></div>
         <section className="panel people-panel"><h2>Jouw huishouden</h2>{state.people.map(person => <PersonForm key={person.id + person.name + person.factor} person={person} save={save} busy={busy}/>)}
           {!state.people.length && <p>Voeg hieronder je eerste huisgenoot toe.</p>}
           <h3>Huisgenoot toevoegen</h3><PersonForm save={save} busy={busy}/>

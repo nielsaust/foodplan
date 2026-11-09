@@ -1,6 +1,9 @@
 services:
   app:
     build: .
+    environment:
+      FOODPLAN_HOUSEHOLD_NAME: ${FOODPLAN_HOUSEHOLD_NAME:-}
+      FOODPLAN_MEMBER_NAMES: ${FOODPLAN_MEMBER_NAMES:-}
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-8787}:8787"
     volumes:

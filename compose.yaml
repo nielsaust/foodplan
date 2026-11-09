@@ -4,6 +4,8 @@ services:
     expose:
       - "8787"
     environment:
+      FOODPLAN_HOUSEHOLD_NAME: ${FOODPLAN_HOUSEHOLD_NAME:-}
+      FOODPLAN_MEMBER_NAMES: ${FOODPLAN_MEMBER_NAMES:-}
       DEPLOY_WEBHOOK_SECRET: ${DEPLOY_WEBHOOK_SECRET:-}
       DEPLOY_SIGNAL_FILE: /run/foodplan-deploy/pending
       VIRTUAL_HOST: ${FOODPLAN_HOST:?Stel FOODPLAN_HOST in}

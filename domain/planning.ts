@@ -5,6 +5,7 @@ export type Person = { id: string; name: string; factor: number }
 export type Meal = { date: string; recipeId: string }
 export type Extra = { id: string; name: string; checked: boolean }
 export type State = {
+  household: { id: string; name: string }
   includeStarterRecipes?: boolean
   recipeEdits?: Record<string, Recipe>
   people: Person[]

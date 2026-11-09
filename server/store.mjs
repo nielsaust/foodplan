@@ -44,7 +44,8 @@ function importState(backup) {
     throw new InputError('Kies een geldig Aan tafel-back-upbestand.')
   }
 
-  const { people, meals, attendance, checked, purchased, extras, recipeEdits, includeStarterRecipes } = backup.state
+  const { household, people, meals, attendance, checked, purchased, extras, recipeEdits, includeStarterRecipes } = backup.state
+  requireInput(household === undefined || (record(household) && idOk(household.id) && nameOk(household.name, 80)))
   requireInput(includeStarterRecipes === undefined || typeof includeStarterRecipes === 'boolean')
   requireInput(Array.isArray(people) && people.every(person =>
     record(person) && idOk(person.id) && nameOk(person.name, 40) &&
@@ -71,7 +72,7 @@ function importState(backup) {
   requireInput(Array.isArray(extras) && extras.every(extra =>
     record(extra) && idOk(extra.id) && nameOk(extra.name, 100) && typeof extra.checked === 'boolean'
   ) && unique(extras, extra => extra.id))
-  return { people, meals, attendance, checked, purchased, extras, recipeEdits, includeStarterRecipes }
+  return { household, people, meals, attendance, checked, purchased, extras, recipeEdits, includeStarterRecipes }
 }
 
 function apply(state, action) {
@@ -197,12 +198,38 @@ export function openStore(file) {
       data TEXT NOT NULL
     );
   `)
+  const configuredName = process.env.FOODPLAN_HOUSEHOLD_NAME?.trim()
+  const memberNames = (process.env.FOODPLAN_MEMBER_NAMES || undefined)?.split(',').map(name => name.trim())
+  requireInput(!configuredName || nameOk(configuredName, 80))
+  requireInput(!memberNames || (memberNames.length === 3 && memberNames.every(name => nameOk(name, 40))))
+
+  function configureHousehold(state) {
+    let changed = false
+    if (!state.household || (configuredName && state.household.name !== configuredName)) {
+      state.household = {
+        id: state.household?.id ?? 'household-1',
+        name: configuredName || 'Mijn huishouden',
+      }
+      changed = true
+    }
+    for (const [index, name] of (memberNames ?? []).entries()) {
+      const number = index + 1
+      const member = state.people.find(person => person.id === 'demo-' + number && person.name === 'Persoon ' + number)
+      if (member && member.name !== name) {
+        member.name = name
+        changed = true
+      }
+    }
+    return changed
+  }
+
   const start = today()
   const initial = {
     people: [1, 2, 3].map(n => ({ id: 'demo-' + n, name: 'Persoon ' + n, factor: 1 })),
     meals: recipes.map((recipe, i) => ({ date: addDays(start, i), recipeId: recipe.id })),
     attendance: {}, checked: [], extras: [],
   }
+  configureHousehold(initial)
   db.prepare('INSERT OR IGNORE INTO household VALUES (1, 0, ?)').run(JSON.stringify(initial))
   const select = db.prepare('SELECT revision, data FROM household WHERE id = 1')
   const update = db.prepare('UPDATE household SET revision = revision + 1, data = ? WHERE id = 1')
@@ -210,21 +237,36 @@ export function openStore(file) {
     const row = select.get()
     return { revision: row.revision, state: JSON.parse(row.data) }
   }
+  function transaction(callback) {
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      const result = callback()
+      db.exec('COMMIT')
+      return result
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+  }
+  transaction(() => {
+    const { state } = read()
+    if (configureHousehold(state)) update.run(JSON.stringify(state))
+  })
   return {
     read,
     write(action, restore = false) {
-      db.exec('BEGIN IMMEDIATE')
-      try {
+      return transaction(() => {
         const { state, revision } = read()
         const next = restore ? importState(action) : state
-        if (!restore) apply(next, action)
+        if (restore) {
+          next.household ??= state.household
+          configureHousehold(next)
+        } else {
+          apply(next, action)
+        }
         update.run(JSON.stringify(next))
-        db.exec('COMMIT')
         return { state: next, revision: revision + 1 }
-      } catch (error) {
-        db.exec('ROLLBACK')
-        throw error
-      }
+      })
     },
   }
 }

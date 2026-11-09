@@ -26,6 +26,8 @@ FOODPLAN_HOST=foodplan.nielsaust.nl
 ACME_CONTACT_EMAIL=beheer@example.com
 ```
 
+Gebruik optioneel `FOODPLAN_HOUSEHOLD_NAME` voor de groepsnaam en `FOODPLAN_MEMBER_NAMES` voor drie namen, gescheiden door komma’s. De namen vervangen de drie standaardnamen met behoud van aanwezigheid en portiefactor. De SQLite-database staat op de VPS in het Docker-volume `meals`.
+
 Laat de hostnaam naar de VPS wijzen en controleer of de bestaande nginx-proxy en ACME-companion actief zijn. De standaard Compose-configuratie sluit aan op het externe netwerk `nginx-proxy` en geeft de hostnaam en interne poort door aan de proxy.
 
 Scherm de hostnaam vóór de eerste start af in nginx-proxy, bijvoorbeeld met het hostspecifieke htpasswd-bestand. De app gebruikt één gedeeld huishouden en heeft geen eigen aanmelding. Controleer bij de eerste deploy zowel HTTPS als de toegangscontrole.
