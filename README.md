@@ -19,7 +19,7 @@ Het volume `meals` bewaart de SQLite-database bij stoppen en opnieuw bouwen. De 
 
 ## VPS met nginx-proxy en Let's Encrypt
 
-Kloon de repository als root op de VPS naar `/opt/foodplan` en gebruik branch `main`. Zet in die map een lokaal `.env`-bestand dat alleen root kan lezen (`chmod 600 .env`):
+Kloon de repository als root op de VPS naar `/srv/docker-projects/foodplan` en gebruik branch `main`. Zet in die map een lokaal `.env`-bestand dat alleen root kan lezen (`chmod 600 .env`):
 
 ```dotenv
 FOODPLAN_HOST=foodplan.nielsaust.nl
@@ -31,8 +31,8 @@ Laat de hostnaam naar de VPS wijzen en controleer of de bestaande nginx-proxy en
 Scherm de hostnaam vóór de eerste start af in nginx-proxy, bijvoorbeeld met het hostspecifieke htpasswd-bestand. De app gebruikt één gedeeld huishouden en heeft geen eigen aanmelding. Controleer bij de eerste deploy zowel HTTPS als de toegangscontrole.
 
 ```sh
-cd /opt/foodplan
-sudo install -d -m 0700 -o 1000 -g 1000 /opt/foodplan/.deploy
+cd /srv/docker-projects/foodplan
+sudo install -d -m 0700 -o 1000 -g 1000 /srv/docker-projects/foodplan/.deploy
 sudo docker compose up --build -d --wait
 ```
 

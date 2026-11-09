@@ -2,7 +2,7 @@
 Description=Watch for the Foodplan deployment webhook
 
 [Path]
-PathExists=/opt/foodplan/.deploy/pending
+PathExists=/srv/docker-projects/foodplan/.deploy/pending
 
 [Install]
 WantedBy=multi-user.target
