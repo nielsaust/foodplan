@@ -1,0 +1,48 @@
+name: Deploy naar VPS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: foodplan-vps
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: ${{ vars.VPS_DEPLOY_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VPS_HOST: ${{ vars.VPS_HOST }}
+      VPS_PORT: ${{ vars.VPS_PORT || '22' }}
+      VPS_USER: ${{ vars.VPS_USER }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+    steps:
+      - name: Werk main bij en start Foodplan
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${VPS_HOST:?VPS_HOST ontbreekt}" "${VPS_USER:?VPS_USER ontbreekt}"
+          : "${VPS_SSH_KEY:?VPS_SSH_KEY ontbreekt}" "${VPS_KNOWN_HOSTS:?VPS_KNOWN_HOSTS ontbreekt}"
+
+          umask 077
+          ssh_dir="$(mktemp -d)"
+          trap 'rm -rf "$ssh_dir"' EXIT
+          printf '%s\n' "$VPS_SSH_KEY" > "$ssh_dir/key"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$ssh_dir/known_hosts"
+
+          ssh -i "$ssh_dir/key" -p "$VPS_PORT" \
+            -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$ssh_dir/known_hosts" \
+            -l "$VPS_USER" -- "$VPS_HOST" 'bash -se' <<'DEPLOY'
+          set -euo pipefail
+          cd /opt/foodplan
+          test "$(git branch --show-current)" = main
+          git pull --ff-only origin main
+          docker compose up --build -d --wait
+          DEPLOY

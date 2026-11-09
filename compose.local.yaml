@@ -1,0 +1,10 @@
+services:
+  app:
+    build: .
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-8787}:8787"
+    volumes:
+      - meals:/app/data
+    restart: unless-stopped
+volumes:
+  meals:

@@ -1,0 +1,30 @@
+services:
+  app:
+    build: .
+    expose:
+      - "8787"
+    environment:
+      VIRTUAL_HOST: ${FOODPLAN_HOST:?Stel FOODPLAN_HOST in}
+      VIRTUAL_PORT: "8787"
+      LETSENCRYPT_HOST: ${FOODPLAN_HOST:?Stel FOODPLAN_HOST in}
+      LETSENCRYPT_EMAIL: ${ACME_CONTACT_EMAIL:?Stel ACME_CONTACT_EMAIL in}
+      ACME_HOST: ${FOODPLAN_HOST:?Stel FOODPLAN_HOST in}
+      ACME_EMAIL: ${ACME_CONTACT_EMAIL:?Stel ACME_CONTACT_EMAIL in}
+    volumes:
+      - meals:/app/data
+    networks:
+      - nginx-proxy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  meals:
+
+networks:
+  nginx-proxy:
+    external: true
