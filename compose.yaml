@@ -4,6 +4,8 @@ services:
     expose:
       - "8787"
     environment:
+      DEPLOY_WEBHOOK_SECRET: ${DEPLOY_WEBHOOK_SECRET:-}
+      DEPLOY_SIGNAL_FILE: /run/foodplan-deploy/pending
       VIRTUAL_HOST: ${FOODPLAN_HOST:?Stel FOODPLAN_HOST in}
       VIRTUAL_PORT: "8787"
       LETSENCRYPT_HOST: ${FOODPLAN_HOST:?Stel FOODPLAN_HOST in}
@@ -12,8 +14,11 @@ services:
       ACME_EMAIL: ${ACME_CONTACT_EMAIL:?Stel ACME_CONTACT_EMAIL in}
     volumes:
       - meals:/app/data
+      - ./.deploy:/run/foodplan-deploy
     networks:
-      - nginx-proxy
+      nginx-proxy:
+        aliases:
+          - foodplan-backend
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 10s

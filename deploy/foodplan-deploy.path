@@ -1,0 +1,8 @@
+[Unit]
+Description=Watch for the Foodplan deployment webhook
+
+[Path]
+PathExists=/opt/foodplan/.deploy/pending
+
+[Install]
+WantedBy=multi-user.target

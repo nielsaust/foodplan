@@ -2,6 +2,7 @@ import { createServer } from 'node:http'
 import { createReadStream, statSync } from 'node:fs'
 import { extname, resolve, sep } from 'node:path'
 import { today } from '../domain/planning.ts'
+import { receiveDeployWebhook } from './deploy-webhook.mjs'
 import { InputError, openStore } from './store.mjs'
 
 const store = openStore(process.env.DATABASE_PATH || 'data/aan-tafel.sqlite')
@@ -15,6 +16,9 @@ const json = (response, status, data, headers = {}) => {
 const server = createServer(async (request, response) => {
   try {
     const path = new URL(request.url, 'http://localhost').pathname
+    if (path === '/api/deploy' && request.method === 'POST') {
+      return await receiveDeployWebhook(request, (status, data) => json(response, status, data))
+    }
     if (path === '/api/state' && request.method === 'GET') return json(response, 200, store.read())
     if (path === '/api/backup' && request.method === 'GET') {
       return json(response, 200, { format: 'aan-tafel', version: 1, state: store.read().state }, {

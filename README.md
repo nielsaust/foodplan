@@ -19,10 +19,10 @@ Het volume `meals` bewaart de SQLite-database bij stoppen en opnieuw bouwen. De 
 
 ## VPS met nginx-proxy en Let's Encrypt
 
-Kloon de repository op de VPS naar `/opt/foodplan` en gebruik branch `main`. Zet in die map een lokaal `.env`-bestand:
+Kloon de repository als root op de VPS naar `/opt/foodplan` en gebruik branch `main`. Zet in die map een lokaal `.env`-bestand dat alleen root kan lezen (`chmod 600 .env`):
 
 ```dotenv
-FOODPLAN_HOST=foodplan.example.com
+FOODPLAN_HOST=foodplan.nielsaust.nl
 ACME_CONTACT_EMAIL=beheer@example.com
 ```
 
@@ -32,17 +32,22 @@ Scherm de hostnaam vóór de eerste start af in nginx-proxy, bijvoorbeeld met he
 
 ```sh
 cd /opt/foodplan
-docker compose up --build -d --wait
+sudo install -d -m 0700 -o 1000 -g 1000 /opt/foodplan/.deploy
+sudo docker compose up --build -d --wait
 ```
 
 Bij migratie vanaf lokaal kun je via **Instellingen** een JSON-back-up downloaden en op de VPS terugzetten.
 
-De workflow **Deploy naar VPS** werkt de checkout op de VPS bij na een push naar `main` en wacht tot de container gezond is. Voor de eerste deploy via GitHub Actions:
+### Automatisch deployen met een GitHub-webhook
 
-- Geef de VPS-deploygebruiker toegang tot `/opt/foodplan` en Docker. Bij een privérepository heeft de checkout ook leesrechten op GitHub nodig.
-- Stel de Actions-variabelen `VPS_HOST`, `VPS_USER` en zo nodig `VPS_PORT` in. De standaardpoort is 22.
-- Stel `VPS_SSH_KEY` en `VPS_KNOWN_HOSTS` in als Actions-secrets. Gebruik een aparte SSH-sleutel voor de workflow en verifieer de host key via de VPS-console.
-- Zet na de handmatige controle `VPS_DEPLOY_ENABLED` op `true`. Start de workflow handmatig om de verbinding te testen.
+De VPS verwerkt alleen ondertekende pushes naar `main` van `nielsaust/foodplan`. Het verzoek zet een seintje klaar. Systemd haalt daarna `main` op, bouwt de container en wacht tot die gezond is.
+
+1. Genereer een aparte sleutel met `openssl rand -hex 32` en zet die in de afgeschermde VPS-`.env` als `DEPLOY_WEBHOOK_SECRET`. Gebruik dezelfde waarde in GitHub bij **Settings → Webhooks → Add webhook**. Houd de sleutel buiten Git.
+2. Installeer de twee bestanden `deploy/foodplan-deploy.path` en `deploy/foodplan-deploy.service` in `/etc/systemd/system/`. Houd de checkout en de `.env` onder beheer van root, omdat systemd Docker als root aanroept. Voer `sudo systemctl daemon-reload` en `sudo systemctl enable --now foodplan-deploy.path` uit.
+3. Plaats de inhoud van `deploy/foodplan.nielsaust.nl.nginx` in de hostspecifieke configuratie `/etc/nginx/vhost.d/foodplan.nielsaust.nl` van de bestaande proxy. De exacte webhookroute gebruikt de GitHub-handtekening voor authenticatie. De rest van de site blijft onder de toegangscontrole van de proxy vallen. Controleer de proxyconfiguratie met `nginx -t` in de proxycontainer en herlaad die daarna.
+4. Start de app opnieuw met `sudo docker compose up --build -d --wait`. Configureer de webhook met payload-URL `https://foodplan.nielsaust.nl/api/deploy`, contenttype `application/json`, SSL-verificatie aan en alleen het **push**-event. Controleer de ping in GitHub en volg de eerste deploy met `sudo journalctl -u foodplan-deploy.service -f`.
+
+Een geldige push krijgt HTTP 202 zodra de deploy klaarstaat. De uitkomst van de deploy staat in het VPS-log. Na een mislukte deploy kun je dezelfde GitHub-delivery opnieuw versturen of `sudo systemctl start foodplan-deploy.service` uitvoeren.
 
 ## Ontwikkelen zonder Docker
 

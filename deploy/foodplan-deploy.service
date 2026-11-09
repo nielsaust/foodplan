@@ -1,0 +1,14 @@
+[Unit]
+Description=Deploy Foodplan from GitHub main
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/foodplan
+Environment=GIT_TERMINAL_PROMPT=0
+ExecStartPre=/usr/bin/rm -f /opt/foodplan/.deploy/pending
+ExecStart=/usr/bin/git pull --ff-only origin main
+ExecStart=/usr/bin/docker compose up --build -d --wait
+TimeoutStartSec=20min
