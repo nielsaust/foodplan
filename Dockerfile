@@ -10,6 +10,7 @@ WORKDIR /app
 ENV HOST=0.0.0.0 PORT=8787 DATABASE_PATH=/app/data/aan-tafel.sqlite
 RUN mkdir data && chown node:node data
 COPY --from=build /app/dist ./dist
+COPY --from=build /app/node_modules/nodemailer ./node_modules/nodemailer
 COPY server ./server
 COPY domain ./domain
 COPY package.json ./

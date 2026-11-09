@@ -192,9 +192,10 @@ export function openStore(file) {
   db.exec(`
     PRAGMA busy_timeout = 5000;
     PRAGMA journal_mode = WAL;
-    CREATE TABLE IF NOT EXISTS household (
-      id INTEGER PRIMARY KEY CHECK (id = 1),
-      revision INTEGER NOT NULL,
+    PRAGMA foreign_keys = ON;
+    CREATE TABLE IF NOT EXISTS group_states (
+      id TEXT PRIMARY KEY,
+      revision INTEGER NOT NULL DEFAULT 0,
       data TEXT NOT NULL
     );
   `)
@@ -230,11 +231,11 @@ export function openStore(file) {
     attendance: {}, checked: [], extras: [],
   }
   configureHousehold(initial)
-  db.prepare('INSERT OR IGNORE INTO household VALUES (1, 0, ?)').run(JSON.stringify(initial))
-  const select = db.prepare('SELECT revision, data FROM household WHERE id = 1')
-  const update = db.prepare('UPDATE household SET revision = revision + 1, data = ? WHERE id = 1')
-  function read() {
-    const row = select.get()
+  const select = db.prepare('SELECT revision, data FROM group_states WHERE id = ?')
+  const update = db.prepare('UPDATE group_states SET revision = revision + 1, data = ? WHERE id = ?')
+  const insert = db.prepare('INSERT INTO group_states (id, revision, data) VALUES (?, ?, ?)')
+  function read(groupId) {
+    const row = select.get(groupId)
     return { revision: row.revision, state: JSON.parse(row.data) }
   }
   function transaction(callback) {
@@ -248,25 +249,42 @@ export function openStore(file) {
       throw error
     }
   }
+  const legacyGroupId = 'household-1'
   transaction(() => {
-    const { state } = read()
-    if (configureHousehold(state)) update.run(JSON.stringify(state))
+    const legacyTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'household'").get()
+    if (legacyTable && !select.get(legacyGroupId)) {
+      const row = db.prepare('SELECT revision, data FROM household WHERE id = 1').get()
+      const state = row ? JSON.parse(row.data) : initial
+      configureHousehold(state)
+      state.household.id = legacyGroupId
+      insert.run(legacyGroupId, row?.revision ?? 0, JSON.stringify(state))
+      db.exec('DROP TABLE household')
+    } else if (!select.get(legacyGroupId)) {
+      insert.run(legacyGroupId, 0, JSON.stringify(initial))
+    }
   })
+
   return {
-    read,
-    write(action, restore = false) {
+    db, transaction, legacyGroupId, read,
+    createGroup(groupId, name) {
+      insert.run(groupId, 0, JSON.stringify({
+        household: { id: groupId, name }, people: [], meals: [], attendance: {}, checked: [], extras: [],
+      }))
+    },
+    write(groupId, action, restore = false) {
       return transaction(() => {
-        const { state, revision } = read()
+        const { state, revision } = read(groupId)
         const next = restore ? importState(action) : state
-        if (restore) {
-          next.household ??= state.household
-          configureHousehold(next)
-        } else {
-          apply(next, action)
-        }
-        update.run(JSON.stringify(next))
+        if (restore) next.household = state.household
+        else apply(next, action)
+        update.run(JSON.stringify(next), groupId)
         return { state: next, revision: revision + 1 }
       })
+    },
+    addGroupPerson(groupId, person) {
+      const { state } = read(groupId)
+      apply(state, { type: 'person', ...person })
+      update.run(JSON.stringify(state), groupId)
     },
   }
 }

@@ -215,3 +215,12 @@ textarea:focus-visible { outline: 3px solid #82a867; outline-offset: 3px; }
 .backup-form { display: grid; justify-items: start; gap: 8px; }
 .backup-form > label { width: 100%; }
 .backup-form p:empty { margin: 0; }
+
+.account-page { min-height: 100dvh; display: grid; place-items: center; }
+.account-panel { width: min(100%, 440px); padding: clamp(20px, 5vw, 34px); }
+.account-panel h1 { margin: 14px 0; }
+.account-panel form { display: grid; gap: 13px; margin-top: 18px; }
+.account-panel form .button { justify-self: start; }
+.account-panel p { margin: 8px 0; }
+.account-links { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 10px; }
+.invite-form p { margin-top: 8px; }

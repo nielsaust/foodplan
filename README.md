@@ -40,6 +40,16 @@ sudo docker compose up --build -d --wait
 
 Bij migratie vanaf lokaal kun je via **Instellingen** een JSON-back-up downloaden en op de VPS terugzetten.
 
+### Accounts en e-mail
+
+Iedere gebruiker heeft voorlopig één groep. In **Huisgenoten** kan de groepseigenaar iemand per e-mail uitnodigen en het nieuwe account aan een bestaand huisgenootprofiel koppelen. Een nieuw account ontstaat pas nadat de gebruiker de link opent en een wachtwoord kiest. Wachtwoordherstel trekt bestaande sessies in.
+
+Maak vóór de eerste uitrol van accounts een JSON-back-up via **Instellingen**. Stel op een bestaande installatie `FOODPLAN_LEGACY_OWNER_EMAIL` in op het adres van de toekomstige eigenaar. Registreer met dat adres en bevestig de link om de bestaande groep over te nemen. Vul bij registratie dezelfde naam in als bij het bestaande huisgenootprofiel om dat profiel te koppelen. Voor de ingestelde eigenaar blijft de bestaande groepsnaam gelden.
+
+Zet ook `CLOUDFLARE_API_TOKEN`, `EMAIL_FROM_ADDRESS` en `EMAIL_FROM_NAME` in de afgeschermde `.env`. Gebruik een door Cloudflare toegestane afzender. Met `CLOUDFLARE_ACCOUNT_ID` verstuurt de server via de Cloudflare-API. Zonder account-ID gebruikt hij Cloudflare SMTP over TLS. Voor de lokale Compose-configuratie kun je `FOODPLAN_PUBLIC_URL` instellen als je een andere browser-URL dan `http://localhost:8787` gebruikt.
+
+Een JSON-back-up uit Instellingen bevat de planningsgegevens van de groep. Voor een volledige serverback-up met accounts en groepslidmaatschappen heb je ook een consistente SQLite-back-up van het Docker-volume nodig.
+
 ### Automatisch deployen met een GitHub-webhook
 
 De VPS verwerkt alleen ondertekende pushes naar `main` van `nielsaust/foodplan`. Het verzoek zet een seintje klaar. Systemd haalt daarna `main` op, bouwt de container en wacht tot die gezond is.

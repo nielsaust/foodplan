@@ -6,6 +6,8 @@ import type { Recipe } from '../domain/catalog'
 import { addDays, amount, datesFrom, diners, formatDate, householdRecipes, portions, shoppingItems, today, weekStart } from '../domain/planning'
 import type { Action, Person, State } from '../domain/planning'
 import { Icon, Plate } from './visuals'
+import { AccountScreen, InviteForm, authRequest, hasAccountLink } from './account'
+import type { Account } from './account'
 import { RecipeEditor } from './recipe-editor'
 import { useMealDrag } from './meal-drag'
 import './style.css'
@@ -25,7 +27,7 @@ const formatShort = (date: string) => formatDate(date, { day: 'numeric', month: 
 const formatLong = (date: string) => formatDate(date, { weekday: 'long', day: 'numeric', month: 'long' })
 const newId = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('')
 
-function useHousehold() {
+function useHousehold(onExpired: () => void) {
   const [snapshot, setSnapshot] = useState<Snapshot>()
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -34,6 +36,7 @@ function useHousehold() {
     const response = await fetch(path, body === undefined ? undefined : {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
     })
+    if (response.status === 401) onExpired()
     if (!response.ok) throw new Error((await response.json()).error)
     const result: Snapshot = await response.json()
     setSnapshot(current => !current || result.revision >= current.revision ? result : current)
@@ -357,8 +360,9 @@ function Shopping({ state, save, busy }: { state: State; save: (action: Action) 
   </>
 }
 
-function App() {
-  const { state, save, restore, error, setError, busy } = useHousehold()
+function App({ account, onExpired }: { account: Account; onExpired: () => void }) {
+  const { state, save, restore, error, setError, busy } = useHousehold(onExpired)
+  const [signingOut, setSigningOut] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [tab, setTab] = useState<Tab>('planning')
   const [week, setWeek] = useState(() => weekStart(today()))
@@ -457,14 +461,26 @@ function App() {
         <section className="panel people-panel"><h2>Jouw huishouden</h2>{state.people.map(person => <PersonForm key={person.id + person.name + person.factor} person={person} save={save} busy={busy}/>)}
           {!state.people.length && <p>Voeg hieronder je eerste huisgenoot toe.</p>}
           <h3>Huisgenoot toevoegen</h3><PersonForm save={save} busy={busy}/>
+          {account.role === 'owner' && <><h3>Uitnodigen voor {state.household.name}</h3><InviteForm people={state.people.filter(person => person.id !== account.personId)}/></>}
         </section>
       </>}
     </main>
     <footer className="site-footer">
       <span className="footer-brand"><Icon name="leaf" size={16}/> Aan tafel · Jouw weekmenu</span>
-      <button className="button text" disabled={!state} onClick={() => { setError(''); setSettingsOpen(true) }}>
+      {account.role === 'owner' && <button className="button text" disabled={!state} onClick={() => { setError(''); setSettingsOpen(true) }}>
         <Icon name="settings" size={17}/> Instellingen
-      </button>
+      </button>}
+      <button className="button text" disabled={busy || signingOut} onClick={async () => {
+        setSigningOut(true)
+        try {
+          await authRequest('logout')
+          onExpired()
+        } catch (failure) {
+          setError(failure instanceof Error ? failure.message : 'Uitloggen is niet gelukt.')
+        } finally {
+          setSigningOut(false)
+        }
+      }}>Uitloggen</button>
     </footer>
     {settingsOpen && <Settings busy={busy} error={error} restore={restore} clearDatabase={() => save({ type: 'clearDatabase' })} close={() => { setError(''); setSettingsOpen(false) }}/>}
     {state && modal && <Dialog key={modal.kind} title={modal.kind === 'recipe' ? selectedRecipe?.title ?? 'Recept' : modal.kind === 'edit' ? (modal.isNew ? 'Recept toevoegen' : 'Recept aanpassen') : formatLong(modal.date)} close={close}>
@@ -507,4 +523,25 @@ function App() {
   </>
 }
 
-createRoot(document.getElementById('root')!).render(<App/>)
+function Root() {
+  const [account, setAccount] = useState<Account | null>()
+  const [error, setError] = useState('')
+  async function refresh() {
+    setError('')
+    try {
+      const response = await fetch('/api/auth/session')
+      if (!response.ok) throw new Error()
+      const result: { account: Account | null } = await response.json()
+      setAccount(result.account)
+    } catch {
+      setError('De server is niet bereikbaar.')
+    }
+  }
+  useEffect(() => { void refresh() }, [])
+  if (error) return <main><p className="alert" role="alert">{error}</p><button className="button" onClick={refresh}>Probeer opnieuw</button></main>
+  if (account === undefined) return <main><p role="status">Aan tafel laden…</p></main>
+  if (!account || hasAccountLink()) return <AccountScreen refresh={refresh} signedIn={!!account}/>
+  return <App key={account.id} account={account} onExpired={() => setAccount(null)}/>
+}
+
+createRoot(document.getElementById('root')!).render(<Root/>)
