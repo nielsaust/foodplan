@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { ingredientById, recipes } from '../domain/catalog.ts'
-import { addDays, datesFrom, diners, householdRecipes, shoppingItems, today, weekStart } from '../domain/planning.ts'
+import { addDays, datesFrom, diners, householdRecipes, purchaseKey, shoppingItems, today, weekStart } from '../domain/planning.ts'
 
 const nameOk = (value, max) => typeof value === 'string' && value.trim().length > 0 && value.trim().length <= max
 const idOk = value => typeof value === 'string' && /^[a-zA-Z0-9-]{1,64}$/.test(value)
@@ -44,7 +44,7 @@ function importState(backup) {
     throw new InputError('Kies een geldig Aan tafel-back-upbestand.')
   }
 
-  const { people, meals, attendance, checked, extras, recipeEdits, includeStarterRecipes } = backup.state
+  const { people, meals, attendance, checked, purchased, extras, recipeEdits, includeStarterRecipes } = backup.state
   requireInput(includeStarterRecipes === undefined || typeof includeStarterRecipes === 'boolean')
   requireInput(Array.isArray(people) && people.every(person =>
     record(person) && idOk(person.id) && nameOk(person.name, 40) &&
@@ -66,11 +66,12 @@ function importState(backup) {
   requireInput(record(attendance) && Object.entries(attendance).every(([date, ids]) =>
     dateOk(date) && Array.isArray(ids) && ids.every(id => peopleIds.has(id))
   ))
+  requireInput(purchased === undefined || (Array.isArray(purchased) && purchased.every(key => typeof key === 'string' && key.length <= 4096)))
   requireInput(Array.isArray(checked) && checked.every(key => typeof key === 'string' && key.length <= 4096))
   requireInput(Array.isArray(extras) && extras.every(extra =>
     record(extra) && idOk(extra.id) && nameOk(extra.name, 100) && typeof extra.checked === 'boolean'
   ) && unique(extras, extra => extra.id))
-  return { people, meals, attendance, checked, extras, recipeEdits, includeStarterRecipes }
+  return { people, meals, attendance, checked, purchased, extras, recipeEdits, includeStarterRecipes }
 }
 
 function apply(state, action) {
@@ -78,7 +79,7 @@ function apply(state, action) {
   switch (action.type) {
     case 'clearDatabase':
       Object.assign(state, {
-        people: [], meals: [], attendance: {}, checked: [], extras: [],
+        people: [], meals: [], attendance: {}, checked: [], purchased: [], extras: [],
         recipeEdits: {}, includeStarterRecipes: false,
       })
       break
@@ -139,6 +140,19 @@ function apply(state, action) {
       if (action.present) ids.add(action.id)
       else ids.delete(action.id)
       state.attendance[action.date] = [...ids]
+      break
+    }
+    case 'removeChecked': {
+      requireInput(dateOk(action.start) && Number.isInteger(action.days) && action.days >= 1 && action.days <= 14)
+      const items = shoppingItems(state, action.start, action.days).filter(item => item.checked)
+      const removed = new Set(items.map(item => item.key))
+      const purchased = new Set(state.purchased)
+      for (const item of items) {
+        for (const [date, quantity] of item.uses) purchased.add(purchaseKey(item.id, date, quantity))
+      }
+      state.purchased = [...purchased]
+      state.checked = state.checked.filter(key => !removed.has(key))
+      state.extras = state.extras.filter(item => !item.checked)
       break
     }
     case 'check':

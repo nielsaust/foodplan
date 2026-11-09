@@ -309,7 +309,10 @@ function Shopping({ state, save, busy }: { state: State; save: (action: Action) 
         <label>Ik doe boodschappen op<input type="date" value={start} onChange={event => { if (event.target.value) setStart(event.target.value) }}/></label>
         <label>Voor hoeveel dagen?<select value={days} onChange={event => setDays(Number(event.target.value))}>{[1, 2, 3, 4, 5, 6, 7, 14].map(n => <option key={n} value={n}>{n} {n === 1 ? 'dag' : 'dagen'}</option>)}</select></label>
       </div>
-      <div className="progress"><strong>{checked} van {total} afgevinkt</strong><progress max={total || 1} value={checked}/></div>
+      <div className="progress"><strong>{checked} van {total} afgevinkt</strong><progress max={total || 1} value={checked}/>
+        {checked > 0 && <button className="remove-checked" disabled={busy}
+          onClick={() => void save({ type: 'removeChecked', start, days })}>Verwijder afgevinkte items</button>}
+      </div>
     </div>
     <div className="shopping-grid">
       {[...new Set(items.map(item => item.group))].sort((a, b) => a.localeCompare(b, 'nl')).map(group => <section className="panel shop-group" key={group}>
@@ -342,7 +345,7 @@ function Shopping({ state, save, busy }: { state: State; save: (action: Action) 
     </div>
     <div className="export-line"><button className="button" disabled={!total} onClick={() => setExportOpen(true)}><Icon name="copy" size={16}/> Exporteer als tekst</button></div>
     {exportOpen && <ShoppingExport items={items} extras={state.extras} close={() => setExportOpen(false)}/>}
-    {!items.length && <p className="empty">Voor deze dagen staan er geen maaltijden met mee-eters gepland.</p>}
+    {!items.length && <p className="empty">Voor deze dagen staan er geen ingrediënten op de boodschappenlijst.</p>}
     <p className="fine-print">Houdbaarheid is een planningsindicatie. Controleer de verpakking en bewaarvoorschriften.</p>
   </>
 }

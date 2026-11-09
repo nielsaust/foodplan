@@ -104,6 +104,7 @@ input[type=checkbox] { width: 19px; height: 19px; margin: 0; accent-color: var(-
 .shop-controls { display: flex; gap: 16px; flex-wrap: wrap; justify-content: space-between; align-items: end; padding: 17px; margin-bottom: 16px; }
 .progress { display: grid; gap: 5px; min-width: 160px; font-size: .82rem; color: var(--muted); }
 progress { width: 100%; accent-color: var(--green); }
+.remove-checked { justify-self: start; border: 0; padding: 4px 0; background: none; color: var(--green); text-decoration: underline; }
 .shopping-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 14px; }
 .shop-group, .people-panel { padding: 17px; }
 .shop-group h2, .people-panel h2 { font-size: 1.5rem; margin-bottom: 9px; }
@@ -150,7 +151,7 @@ label.inline-field { display: flex; align-items: center; gap: 6px; }
 @media (max-width: 700px) {
   .header-inner { display: block; height: auto; padding: 12px 12px 7px; }
   .wordmark { margin-bottom: 9px; }
-  nav { justify-content: space-between; gap: 0; }
+  nav { justify-content: space-between; gap: 5px; }
   nav button { flex: 1; flex-direction: column; padding: 6px 2px; gap: 3px; font-size: .68rem; }
   main { padding: 16px 12px 34px; }
   .hero { min-height: 270px; grid-template-columns: 1fr; }

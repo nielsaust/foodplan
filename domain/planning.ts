@@ -11,6 +11,7 @@ export type State = {
   meals: Meal[]
   attendance: Record<string, string[]>
   checked: string[]
+  purchased?: string[]
   extras: Extra[]
 }
 export const householdRecipes = (state: State) => ({ ...(state.includeStarterRecipes === false ? {} : recipeById), ...state.recipeEdits })
@@ -24,6 +25,7 @@ export type Action =
   | { type: 'meal'; date: string; recipeId: string | null }
   | { type: 'copyWeek'; from: string }
   | { type: 'attendance'; date: string; id: string; present: boolean }
+  | { type: 'removeChecked'; start: string; days: number }
   | { type: 'check'; key: string; checked: boolean; start: string; days: number }
   | { type: 'extra'; id: string; name: string }
   | { type: 'checkExtra'; id: string; checked: boolean }
@@ -49,8 +51,11 @@ export const portions = (people: Person[]) => people.reduce((total, person) => t
 const quantity = new Intl.NumberFormat('nl-NL', { maximumFractionDigits: 2 })
 export const amount = (value: number, unit: string) => quantity.format(value) + ' ' + unit
 
+export const purchaseKey = (id: string, date: string, quantity: number) => JSON.stringify([id, date, quantity])
+
 export function shoppingItems(state: State, start: string, days: number) {
   const catalog = householdRecipes(state)
+  const purchased = new Set(state.purchased)
   const totals = new Map<string, { total: number; uses: [string, number][] }>()
   for (const date of datesFrom(start, days)) {
     const meal = state.meals.find(item => item.date === date)
@@ -58,8 +63,9 @@ export function shoppingItems(state: State, start: string, days: number) {
     if (!meal || !scale) continue
     for (const [id, base] of Object.entries(catalog[meal.recipeId].amounts)) {
       if (!ingredientById[id].group) continue
-      const entry = totals.get(id) ?? { total: 0, uses: [] }
       const value = base * scale
+      if (purchased.has(purchaseKey(id, date, value))) continue
+      const entry = totals.get(id) ?? { total: 0, uses: [] }
       entry.total += value
       entry.uses.push([date, value])
       totals.set(id, entry)
