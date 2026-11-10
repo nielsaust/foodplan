@@ -27,7 +27,7 @@ p { line-height: 1.55; }
 .header-inner { max-width: 1168px; padding: 0 24px; height: 76px; margin: auto; display: flex; align-items: center; justify-content: space-between; gap: 24px; }
 .wordmark { white-space: nowrap; display: inline-flex; align-items: center; gap: 10px; border: 0; background: none; padding: 0; font: 700 26px/1 var(--display); letter-spacing: -.055em; }
 .brand-icon { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 12px; background: var(--green); color: #f5f4d6; }
-.brand-dot { color: #6f864d; margin-left: -8px; }
+.brand-dot { color: #6f864d; }
 nav { display: flex; gap: 5px; }
 nav button { display: flex; align-items: center; justify-content: center; gap: 8px; border: 0; border-radius: 9px; padding: 10px 13px; background: transparent; color: var(--muted); font-size: .88rem; font-weight: 650; }
 nav button:hover, nav .nav-current { background: var(--pale); color: var(--green); }
@@ -100,7 +100,26 @@ main { max-width: 1168px; margin: 0 auto; padding: 30px 24px 55px; min-height: c
 .search svg { pointer-events: none; position: absolute; bottom: 11px; left: 11px; color: var(--muted); }
 input:not([type=checkbox]), select { min-height: 41px; width: 100%; border: 1px solid #dce2d7; border-radius: 8px; color: var(--ink); background: var(--paper); padding: 8px 10px; font-size: .93rem; }
 label:not(.check-row) { display: grid; gap: 5px; font-size: .8rem; font-weight: 700; }
-input[type=checkbox] { width: 19px; height: 19px; margin: 0; accent-color: var(--green); flex: none; cursor: pointer; }
+input[type=checkbox] {
+  appearance: none;
+  width: 21px;
+  height: 21px;
+  margin: 0;
+  border: 1px solid #708273;
+  border-radius: 5px;
+  background: var(--paper) center / 13px 13px no-repeat;
+  flex: none;
+  cursor: pointer;
+}
+input[type=checkbox]:checked {
+  border-color: var(--green);
+  background-color: var(--green);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m3 8 3.2 3.2L13 4.5' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+input[type=checkbox]:disabled { opacity: .5; cursor: default; }
+@media (forced-colors: active) {
+  input[type=checkbox] { appearance: auto; }
+}
 .shop-controls { display: flex; gap: 16px; flex-wrap: wrap; justify-content: space-between; align-items: end; padding: 17px; margin-bottom: 16px; }
 .progress { display: grid; gap: 5px; min-width: 160px; font-size: .82rem; color: var(--muted); }
 progress { width: 100%; accent-color: var(--green); }
@@ -148,12 +167,35 @@ label.inline-field { display: flex; align-items: center; gap: 6px; }
 .dialog-footer { margin-top: 16px; }
 .full-width { width: 100%; }
 
-@media (max-width: 700px) {
+@media screen and (700px < width <= 840px) {
+  .brand-name { display: none; }
+  .header-inner { padding-inline: 16px; gap: 12px; }
+  .header-inner nav button { padding-inline: 9px; }
+}
+
+@media screen and (max-width: 700px) {
   .header-inner { display: block; height: auto; padding: 12px 12px 7px; }
   .wordmark { margin-bottom: 9px; }
   nav { justify-content: space-between; gap: 5px; }
   nav button { flex: 1; flex-direction: column; padding: 6px 2px; gap: 3px; font-size: .68rem; }
-  main { padding: 16px 12px 34px; }
+  main { --page-gutter: 12px; padding: 16px var(--page-gutter) 34px; }
+  main > .hero, .schedule > .day-list, main > .shop-controls, .shopping-grid > .shop-group, main > .household-panel {
+    margin-inline: calc(-1 * var(--page-gutter));
+    border-radius: 0;
+    border-inline: 0;
+  }
+  .mobile-fullscreen {
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    height: 100dvh;
+    max-width: none;
+    max-height: none;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    overscroll-behavior: contain;
+  }
   .hero { min-height: 270px; grid-template-columns: 1fr; }
   .hero-copy { padding: 25px 0 25px 18px; }
   .hero h1 { font-size: clamp(2.45rem, 8.6vw, 3.9rem); }
@@ -250,9 +292,20 @@ textarea:focus-visible { outline: 3px solid #82a867; outline-offset: 3px; }
 .meal-results { margin-top: 12px; }
 .meal-results .recipe-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); }
 
-.recipe-actions { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
-.recipe-actions .dialog-footer { margin: 0; }
-.print-button { margin-left: auto; }
+.dialog-heading h2 { min-width: 0; overflow-wrap: anywhere; }
+.dialog-heading-actions { display: flex; flex: none; gap: 8px; }
+
+@media screen and (max-width: 700px) {
+  .recipe-plan { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; }
+  .recipe-plan select { width: 100%; }
+  .recipe-plan small { grid-column: 1 / -1; }
+}
+
+@media screen and (max-width: 400px) {
+  .recipe-plan { grid-template-columns: minmax(0, 1fr); }
+  .recipe-plan button { justify-content: center; }
+}
+
 .print-portions { display: none; }
 
 @media print {
@@ -279,4 +332,46 @@ textarea:focus-visible { outline: 3px solid #82a867; outline-offset: 3px; }
 
 @media print {
   .recipe-print-dialog .detail-tools { display: none; }
+}
+
+.tags .allergy-tag { background: #fae9d8; color: #783e16; }
+
+.dialog-content fieldset {
+  min-inline-size: 0;
+  margin: 0;
+  padding: 14px 16px;
+  border: 0;
+  border-radius: 12px;
+  background: #edf2e8;
+}
+
+.dialog-content fieldset + fieldset { margin-block-start: 10px; }
+.dialog-content .form-row > fieldset + fieldset { margin-block-start: 0; }
+
+.dialog-content fieldset legend {
+  padding: 3px 8px;
+  margin-inline-start: -8px;
+  border-radius: 6px;
+  background: inherit;
+  color: var(--green);
+  font-weight: 700;
+}
+
+.dialog-content .allergy-fieldset { background: #faf0e5; }
+.dialog-content .allergy-fieldset legend { color: #783e16; }
+.dialog-content fieldset .check-row { border-bottom: 0; }
+.dialog-content fieldset > small { display: block; margin-block-end: 6px; }
+.filter-options { grid-template-columns: repeat(auto-fit, minmax(min(100%, 155px), 1fr)); }
+
+.dialog-content fieldset legend { padding: 6px 12px; margin-inline-start: -4px; }
+.step-edit select {
+  appearance: none;
+  padding-inline-end: 36px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m4 6 4 4 4-4' fill='none' stroke='%23274b35' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 13px center;
+  background-size: 14px;
+}
+@media (forced-colors: active) {
+  .step-edit select { appearance: auto; background-image: none; }
 }

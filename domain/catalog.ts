@@ -5,6 +5,7 @@ export type Ingredient = {
   name: string
   unit: string
   group: string
+  code?: string
   shelfDays?: number
   translations?: Localized<{ name: string }>
 }
@@ -48,7 +49,9 @@ export const ingredients: Ingredient[] = [
 ]
 
 export const ingredientById = Object.fromEntries(ingredients.map(item => [item.id, item]))
-export const dietTags = ['Glutenvrij', 'Vegetarisch', 'Vegan', 'Lactosevrij'] as const
+export const allergyTags = ['Glutenvrij', 'Lactosevrij', 'Pindavrij', 'Notenvrij', 'Sojavrij'] as const
+export const isAllergyTag = (tag: string) => allergyTags.some(label => label === tag)
+export const dietTags = ['Vegetarisch', 'Vegan', ...allergyTags] as const
 export const nutritionLabels = { kcal: 'kcal', protein: 'g eiwit', fiber: 'g vezels', carbs: 'g koolhydraten', fat: 'g vet' } as const
 export type NutritionValues = Partial<Record<keyof typeof nutritionLabels, number>>
 

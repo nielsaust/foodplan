@@ -1,7 +1,7 @@
-import { nutritionLabels } from '../domain/catalog'
+import { nutritionLabels, allergyTags, isAllergyTag } from '../domain/catalog'
 import type { NutritionValues } from '../domain/catalog'
 import { useState } from 'react'
-import { nameKey } from '../domain/terms'
+import { nameKey, ingredientCode } from '../domain/terms'
 import type { Tag, Terms } from '../domain/terms'
 import { unitChoices } from '../domain/units'
 import type { Ingredient, Recipe } from '../domain/catalog'
@@ -51,7 +51,34 @@ export function RecipeEditor({ recipe, busy, publicTerms, privateTerms, onSave, 
   }))])
   const ingredients = Object.fromEntries([...publicTerms.ingredients, ...privateTerms.ingredients, ...newIngredients].map(item => [item.id, item]))
   const tags = Object.fromEntries([...publicTerms.tags, ...privateTerms.tags, ...newTags].map(item => [item.id, item]))
-  const [steps, setSteps] = useState(() => draft.steps.map((text, id) => ({ id, text })))
+  const [originalCodes] = useState(() => {
+    const entries = Object.values(ingredients)
+    const codes = new Map(entries.map(item => [item.id, item.id]))
+    const used = new Set(codes.values())
+    for (const item of entries) {
+      if (!item.code && !/^ingredient-[a-f0-9]{32}$/.test(item.id)) continue
+      const base = item.code ?? (ingredientCode(item.name) || 'ingredient')
+      let code = base
+      for (let suffix = 2; used.has(code); suffix++) code = base + '-' + suffix
+      used.add(code)
+      codes.set(item.id, code)
+    }
+    return codes
+  })
+  const codes = new Map(originalCodes)
+  const used = new Set(codes.values())
+  for (const item of Object.values(ingredients)) {
+    if (codes.has(item.id)) continue
+    const base = item.code ?? (ingredientCode(item.name) || 'ingredient')
+    let code = base
+    for (let suffix = 2; used.has(code); suffix++) code = base + '-' + suffix
+    used.add(code)
+    codes.set(item.id, code)
+  }
+  const idsByCode = new Map([...codes].map(([id, code]) => [code, id]))
+  const replaceReferences = (step: string, lookup: Map<string, string>) =>
+    step.replace(/\{([a-z0-9-]+)(:[^}]+)?\}/g, (_, key, fraction = '') => '{' + (lookup.get(key) ?? key) + fraction + '}')
+  const [steps, setSteps] = useState(() => draft.steps.map((text, id) => ({ id, text: replaceReferences(text, codes) })))
   const setField = <K extends keyof Recipe>(key: K, value: Recipe[K]) => setDraft(current => ({ ...current, [key]: value }))
   function addIngredient(ingredient: Ingredient) {
     if (!Object.hasOwn(draft.amounts, ingredient.id)) setField('amounts', { ...draft.amounts, [ingredient.id]: 1 })
@@ -64,7 +91,7 @@ export function RecipeEditor({ recipe, busy, publicTerms, privateTerms, onSave, 
   return <form className="recipe-editor" onSubmit={event => {
     event.preventDefault()
     if (loadingImage || newIngredient) return
-    onSave({ ...draft, tagIds: selectedTags, tags: selectedTags.map(id => tags[id].name), steps: steps.map(step => step.text) }, {
+    onSave({ ...draft, tagIds: selectedTags, tags: selectedTags.map(id => tags[id].name), steps: steps.map(step => replaceReferences(step.text, idsByCode)) }, {
       ingredients: newIngredients.filter(item => Object.hasOwn(draft.amounts, item.id)),
       tags: newTags.filter(item => selectedTags.includes(item.id)),
     })
@@ -98,19 +125,31 @@ export function RecipeEditor({ recipe, busy, publicTerms, privateTerms, onSave, 
     {typeof draft.source === 'string' && <label>Bronlink<input type="url" required maxLength={2048}
       placeholder="https://…" value={draft.source} onChange={event => setField('source', event.target.value)}/></label>}
     <div className="tags selected-terms">
-      {selectedTags.map(id => <button className="button" key={id} type="button" aria-label={tags[id].name + ' verwijderen'}
+      {selectedTags.filter(id => !isAllergyTag(tags[id].name)).map(id => <button className="button" key={id} type="button" aria-label={tags[id].name + ' verwijderen'}
         onClick={() => setSelectedTags(selectedTags.filter(tagId => tagId !== id))}>{tags[id].name} <Icon name="close" size={14}/></button>)}
     </div>
-    <TermPicker label="Kenmerk zoeken of toevoegen" options={Object.values(tags)} maxLength={40}
+    <TermPicker label="Kenmerk zoeken of toevoegen" options={Object.values(tags).filter(tag => !isAllergyTag(tag.name))} maxLength={40}
       describe={tag => publicTerms.tags.some(item => item.id === tag.id) ? 'Publiek' : 'Privé'}
       pick={selectTag} create={publicOnly ? undefined : name => {
-        if (selectedTags.length >= 20) return
+        if (selectedTags.length >= 20 || publicTerms.tags.some(tag => isAllergyTag(tag.name) && nameKey(tag.name) === nameKey(name))) return
         const tag = { id: createTermId('tag'), name }
         setNewTags([...newTags, tag])
         selectTag(tag)
       }}/>
-    <fieldset className="full-width"><legend>Voedingswaarden per portie (optioneel)</legend>
-      <div className="form-row">{(Object.keys(nutritionLabels) as (keyof NutritionValues)[]).map(key => <label key={key}>{nutritionLabels[key]}
+    <fieldset className="full-width allergy-fieldset"><legend>Allergie-informatie</legend>
+      <small>Vink alleen labels aan die je voor dit recept hebt gecontroleerd.</small>
+      <div className="form-row">{allergyTags.map(name => {
+        const tag = publicTerms.tags.find(item => item.name === name)
+        if (!tag) return null
+        const ids = selectedTags.filter(id => tags[id].name === tag.name)
+        return <label className="check-row" key={tag.id}>
+          <input type="checkbox" checked={ids.length > 0} disabled={!ids.length && selectedTags.length >= 20}
+            onChange={event => event.target.checked ? selectTag(tag) : setSelectedTags(selectedTags.filter(id => !ids.includes(id)))}/>{tag.name}
+        </label>
+      })}</div>
+    </fieldset>
+    <fieldset className="full-width"><legend>Voedingswaarden per portie</legend>
+      <div className="form-row">{(Object.keys(nutritionLabels) as (keyof NutritionValues)[]).map(key => <label key={key}>{key === "kcal" ? "Aantal kilocalorieën (kcal)" : "Aantal gram " + nutritionLabels[key].slice(2)}
         <input type="number" min="0" max="10000" step="any" value={draft.nutrition?.[key] ?? ''} onChange={event => {
           const values = { ...draft.nutrition }
           if (event.target.value === '') delete values[key]
@@ -130,7 +169,7 @@ export function RecipeEditor({ recipe, busy, publicTerms, privateTerms, onSave, 
         delete amounts[id]
         setField('amounts', amounts)
         setSteps(current => current.map(step => ({
-          ...step, text: step.text.replace(/\{([^}:]+)(?::[^}]+)?\}/g, (token, reference) => reference === id ? ingredients[id].name.toLocaleLowerCase('nl') : token),
+          ...step, text: step.text.replace(/\{([^}:]+)(?::[^}]+)?\}/g, (token, reference) => reference === codes.get(id) ? ingredients[id].name.toLocaleLowerCase('nl') : token),
         })))
       }}><Icon name="close" size={16}/></button>
     </div>)}
@@ -160,7 +199,7 @@ export function RecipeEditor({ recipe, busy, publicTerms, privateTerms, onSave, 
           const field = event.currentTarget.closest('.step-edit')?.querySelector('textarea')
           const start = field?.selectionStart ?? step.text.length
           const end = field?.selectionEnd ?? start
-          const text = step.text.slice(0, start) + '{' + id + '}' + step.text.slice(end)
+          const text = step.text.slice(0, start) + '{' + codes.get(id) + '}' + step.text.slice(end)
           setSteps(current => current.map(item => item.id === step.id ? { ...item, text } : item))
         }}>
           <option value="" disabled>Ingrediënt invoegen…</option>

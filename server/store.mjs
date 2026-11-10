@@ -39,9 +39,9 @@ const recipeTranslationFields = {
 export function validateTerm(term, kind) {
   const ingredient = kind === 'ingredient'
   requireInput(record(term) && typeof term.id === 'string' && new RegExp('^' + kind + '-[a-f0-9]{32}$').test(term.id) &&
-    nameOk(term.name, ingredient ? 80 : 40) && localized(term.translations, { name: value => nameOk(value, ingredient ? 80 : 40) }) && (!ingredient || (typeof term.unit === 'string' && isUnit(term.unit))))
+    nameOk(term.name, ingredient ? 80 : 40) && localized(term.translations, { name: value => nameOk(value, ingredient ? 80 : 40) }) && (!ingredient || (typeof term.unit === 'string' && isUnit(term.unit) && (term.code === undefined || (typeof term.code === 'string' && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(term.code) && term.code.length <= 64)))))
   return ingredient
-    ? { id: term.id, name: term.name.trim(), unit: term.unit, group: 'Overige ingrediënten', translations: term.translations }
+    ? { id: term.id, name: term.name.trim(), unit: term.unit, code: term.code, group: 'Overige ingrediënten', translations: term.translations }
     : { id: term.id, name: term.name.trim(), translations: term.translations }
 }
 

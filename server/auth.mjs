@@ -227,7 +227,7 @@ export function createAuth(store, mail = sendMail) {
         return moderation.importCatalog(current.groupId, body.bundle, body.ids)
       case 'admin-overview':
         requireSuperuser(current)
-        return { ...management(), publications: moderation.list(), terms: moderation.pendingTerms() }
+        return { ...management(), publications: moderation.list(), terms: moderation.pendingTerms(), publicIngredients: store.publicTerms().ingredients }
       case 'public-recipe-edit':
         requireSuperuser(current)
         return moderation.editPublic(body.recipe)
@@ -238,6 +238,14 @@ export function createAuth(store, mail = sendMail) {
         requireSuperuser(current)
         moderation.decide(body)
         return { message: 'Publicatiestatus opgeslagen.' }
+      case 'ingredient-code-suggest':
+        requireSuperuser(current)
+        return moderation.suggestIngredientCode(body.name, body.id)
+      case 'ingredient-edit':
+        requireSuperuser(current)
+        if (typeof body.id !== 'string' || (body.groupId !== undefined && typeof body.groupId !== 'string')) throw new InputError('Kies een ingrediënt.')
+        moderation.editIngredient(body)
+        return { message: 'Ingrediënt opgeslagen.' }
       case 'term-publish':
         requireSuperuser(current)
         moderation.publishTerm(body)

@@ -6,9 +6,9 @@ import type { Ingredient, Recipe } from '../domain/catalog'
 type ManagedAccount = { id: string; name: string; email: string; groupId: string; role: string; created: number | null; blocked: number; superuser: number; granted: number }
 type ManagedGroup = { id: string; name: string; members: number; created: number | null; blocked: number }
 type Publication = { id: string; title: string; groupName: string; status: 'pending' | 'approved' | 'rejected' | 'archived'; created: number }
-type PendingTerm = { id: string; groupId: string; groupName: string; kind: 'ingredient' | 'tag'; name: string; unit?: string }
+type PendingTerm = { id: string; groupId: string; groupName: string; kind: 'ingredient' | 'tag'; name: string; unit?: string; code?: string }
 type Review = { recipe: Recipe; ingredients: Record<string, Ingredient> }
-type Overview = { accounts: ManagedAccount[]; groups: ManagedGroup[]; publications: Publication[]; terms: PendingTerm[] }
+type Overview = { accounts: ManagedAccount[]; groups: ManagedGroup[]; publications: Publication[]; terms: PendingTerm[]; publicIngredients: Ingredient[] }
 const sections = {
   transfer: { title: 'Publieke recepten overzetten', description: 'Importeer of exporteer recepten via een JSON-bestand.' },
   publications: { title: 'Receptpublicaties', description: 'Beoordeel inzendingen en beheer gepubliceerde recepten.' },
@@ -172,15 +172,19 @@ export function AdminPage({ accountId, groupId }: { accountId: string; groupId: 
 
         <p>Pas desgewenst de publieke naam aan. Publiceer de gekoppelde termen voordat je een recept goedkeurt.</p>
         {!overview?.terms?.length && <p>Geen nieuwe termen om te publiceren.</p>}
-        {overview?.terms?.map(term => <article className="admin-row" key={term.groupId + '/' + term.id}>
-
-          <p>{term.kind === 'ingredient' ? 'Ingrediënt' : 'Kenmerk'} · {term.groupName}</p>
-          <form className="form-row" onSubmit={event => form(event, 'term-publish', { groupId: term.groupId, id: term.id, kind: term.kind })}>
-            <label>Publieke naam<input name="name" defaultValue={term.name} required maxLength={term.kind === 'ingredient' ? 80 : 40}/></label>
-            {term.unit && <small>Eenheid: {term.unit}</small>}
-            <button className="button" disabled={busy}>Publiek maken</button>
-          </form>
-        </article>)}
+        {overview?.terms?.map(term => term.kind === 'ingredient'
+          ? <IngredientAdminForm key={term.groupId + '/' + term.id} term={term} groupId={term.groupId} groupName={term.groupName} busy={busy} change={change}/>
+          : <article className="admin-row" key={term.groupId + '/' + term.id}>
+            <p>Kenmerk · {term.groupName}</p>
+            <form className="form-row" onSubmit={event => form(event, 'term-publish', { groupId: term.groupId, id: term.id, kind: term.kind })}>
+              <label>Publieke naam<input name="name" defaultValue={term.name} required maxLength={40}/></label>
+              <button className="button" disabled={busy}>Publiek maken</button>
+            </form>
+          </article>)}
+        {!!overview?.publicIngredients?.length && <details>
+          <summary>Publieke ingrediënten bewerken</summary>
+          {overview.publicIngredients.map(term => <IngredientAdminForm key={term.id} term={term} busy={busy} change={change}/>)}
+        </details>}
       </section>
       <section className="panel people-panel" hidden={section !== "accounts"}>
 
@@ -209,4 +213,38 @@ export function AdminPage({ accountId, groupId }: { accountId: string; groupId: 
         </article>)}
       </section>
   </>
+}
+
+function IngredientAdminForm({ term, groupId, groupName, busy, change }: {
+  term: { id: string; name: string; code?: string; unit?: string }; groupId?: string; groupName?: string
+  busy: boolean; change: (route: string, body: Record<string, unknown>) => Promise<void>
+}) {
+  const [suggesting, setSuggesting] = useState(false)
+  const [error, setError] = useState('')
+  return <article className="admin-row">
+    <p>{groupName ? 'Ingrediënt · ' + groupName : 'Publiek ingrediënt'} · {term.unit}</p>
+    <form className="form-row" onSubmit={event => {
+      event.preventDefault()
+      const publish = (event.nativeEvent as SubmitEvent).submitter?.getAttribute('value') === 'publish'
+      void change(publish ? 'term-publish' : 'ingredient-edit', {
+        ...Object.fromEntries(new FormData(event.currentTarget)), id: term.id, groupId, kind: 'ingredient',
+      })
+    }}>
+      <label>Naam<input name="name" defaultValue={term.name} maxLength={80} required/></label>
+      <label>Ingrediëntcode<input name="code" defaultValue={term.code} pattern="[a-z0-9]+(?:-[a-z0-9]+)*" maxLength={64} placeholder="bijv. spring-onion"/></label>
+      <button type="button" className="button" disabled={busy || suggesting} onClick={async event => {
+        const fields = event.currentTarget.form?.elements
+        const name = fields?.namedItem('name') as HTMLInputElement
+        const code = fields?.namedItem('code') as HTMLInputElement
+        setError('')
+        setSuggesting(true)
+        try { code.value = (await adminRequest<{ code: string }>('ingredient-code-suggest', { name: name.value, id: term.id })).code }
+        catch (failure) { setError(failure instanceof Error ? failure.message : 'Vertalen lukt nu niet.') }
+        finally { setSuggesting(false) }
+      }}>Engelse code voorstellen</button>
+      <button className="button" disabled={busy || suggesting}>Opslaan</button>
+      {groupId && <button className="button" value="publish" disabled={busy || suggesting}>Publiek maken</button>}
+    </form>
+    {error && <p role="alert">{error}</p>}
+  </article>
 }

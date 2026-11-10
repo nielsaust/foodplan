@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { ingredientById, recipes } from '../domain/catalog.ts'
-import { baseTags, nameKey } from '../domain/terms.ts'
+import { baseTags, nameKey, ingredientCode } from '../domain/terms.ts'
 import { InputError, validateRecipe, validateTerm } from './store.mjs'
 
 export function createModeration(store) {
@@ -31,8 +31,62 @@ export function createModeration(store) {
       return { ...recipe, tags: canonicalTags(recipe) }
     }),
   ]
+  function codeTaken(code, id) {
+    if (Object.hasOwn(ingredientById, code) || /^ingredient-[a-f0-9]{32}$/.test(code)) return true
+    return !!db.prepare(`
+      SELECT 1 FROM public_terms WHERE kind = 'ingredient' AND id <> ? AND json_extract(data, '$.code') = ?
+      UNION ALL
+      SELECT 1 FROM group_states g, json_each(g.data, '$.customIngredients') i
+      WHERE i.key <> ? AND json_extract(i.value, '$.code') = ?
+      LIMIT 1
+    `).get(id, code, id, code)
+  }
+
   return {
     publicRecipes,
+    async suggestIngredientCode(name, id) {
+      if (typeof name !== 'string' || !name.trim() || name.length > 80 || typeof id !== 'string') {
+        throw new InputError('Vul eerst een ingrediëntnaam in.')
+      }
+      const url = new URL('https://api.mymemory.translated.net/get')
+      url.search = new URLSearchParams({ q: name.trim(), langpair: 'nl|en' })
+      let base
+      try {
+        const response = await fetch(url, { signal: AbortSignal.timeout(5000), redirect: 'error' })
+        const result = await response.json()
+        const translated = result.responseData?.translatedText
+        if (response.ok && Number(result.responseStatus) === 200 && typeof translated === 'string') base = ingredientCode(translated)
+      } catch { /* The administrator can enter a code manually. */ }
+      if (!base) throw new InputError('Vertalen lukt nu niet. Vul zelf een Engelse code in.')
+      let code = base
+      for (let suffix = 2; codeTaken(code, id); suffix++) code = base + '-' + suffix
+      return { code }
+    },
+    editIngredient({ groupId, id, name, code }) {
+      store.transaction(() => {
+        const published = db.prepare("SELECT data FROM public_terms WHERE id = ? AND kind = 'ingredient'").get(id)
+        const row = groupId && db.prepare('SELECT data FROM group_states WHERE id = ?').get(groupId)
+        const state = row ? JSON.parse(row.data) : undefined
+        const previous = published ? JSON.parse(published.data) : state?.customIngredients?.[id]
+        if (!previous) throw new InputError('Dit ingrediënt bestaat niet meer.')
+        if (typeof code !== 'string' || (code && codeTaken(code, id))) throw new InputError('Deze ingrediëntcode is al bezet of ongeldig.')
+        const term = validateTerm({ ...previous, name, code: code || undefined }, 'ingredient')
+        if (published) {
+          db.prepare('UPDATE public_terms SET data = ? WHERE id = ?').run(JSON.stringify(term), id)
+        }
+        const linked = db.prepare("SELECT id, data FROM group_states WHERE json_type(data, '$.customIngredients') = 'object'").all()
+        const update = db.prepare('UPDATE group_states SET data = ?, revision = revision + 1 WHERE id = ?')
+        for (const row of linked) {
+          if (!published && row.id !== groupId) continue
+          const household = JSON.parse(row.data)
+          const existing = household.customIngredients[id]
+          if (existing) {
+            household.customIngredients[id] = { ...existing, name: term.name, code: term.code }
+            update.run(JSON.stringify(household), row.id)
+          }
+        }
+      })
+    },
     editPublic(recipe) {
       const terms = store.publicTerms()
       const ingredients = { ...ingredientById, ...Object.fromEntries(terms.ingredients.map(term => [term.id, term])) }
@@ -114,7 +168,7 @@ export function createModeration(store) {
         WHERE NOT EXISTS (SELECT 1 FROM public_terms p WHERE p.id = t.key)
       `).all().map(({ data, ...row }) => ({ ...row, ...JSON.parse(data) }))
     },
-    publishTerm({ groupId, id, kind, name }) {
+    publishTerm({ groupId, id, kind, name, code }) {
       if (typeof groupId !== 'string' || typeof id !== 'string' || !['ingredient', 'tag'].includes(kind)) {
         throw new InputError('Kies een ingrediënt of kenmerk.')
       }
@@ -122,7 +176,9 @@ export function createModeration(store) {
       const state = row && JSON.parse(row.data)
       const terms = kind === 'ingredient' ? state?.customIngredients : state?.customTags
       if (!Object.hasOwn(terms ?? {}, id)) throw new InputError('Deze term bestaat niet meer.')
-      const term = validateTerm({ ...terms[id], name: name === undefined ? terms[id].name : name }, kind)
+      const term = validateTerm({ ...terms[id], name: name ?? terms[id].name,
+        code: code === undefined ? terms[id].code : code === '' ? undefined : code }, kind)
+      if (term.code && codeTaken(term.code, id)) throw new InputError('Deze ingrediëntcode is al bezet.')
       if (!db.prepare('INSERT OR IGNORE INTO public_terms VALUES (?, ?, ?)').run(id, kind, JSON.stringify(term)).changes) {
         throw new InputError('Deze term is al gepubliceerd.')
       }
