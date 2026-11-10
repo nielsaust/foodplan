@@ -1,3 +1,5 @@
+import { nutritionLabels } from '../domain/catalog'
+import type { NutritionValues } from '../domain/catalog'
 import { useState } from 'react'
 import { nameKey } from '../domain/terms'
 import type { Tag, Terms } from '../domain/terms'
@@ -30,8 +32,8 @@ async function resizeRecipeImage(file: File) {
 const createTermId = (kind: string) => kind + '-' +
   Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('')
 
-export function RecipeEditor({ recipe, busy, publicTerms, privateTerms, onSave, cancel }: {
-  recipe: Recipe; busy: boolean; publicTerms: Terms; privateTerms: Terms
+export function RecipeEditor({ recipe, busy, publicTerms, privateTerms, onSave, cancel, publicOnly = false }: {
+  recipe: Recipe; publicOnly?: boolean; busy: boolean; publicTerms: Terms; privateTerms: Terms
   onSave: (recipe: Recipe, terms: Terms) => void; cancel: () => void
 }) {
   const [draft, setDraft] = useState(recipe)
@@ -101,12 +103,22 @@ export function RecipeEditor({ recipe, busy, publicTerms, privateTerms, onSave, 
     </div>
     <TermPicker label="Kenmerk zoeken of toevoegen" options={Object.values(tags)} maxLength={40}
       describe={tag => publicTerms.tags.some(item => item.id === tag.id) ? 'Publiek' : 'Privé'}
-      pick={selectTag} create={name => {
+      pick={selectTag} create={publicOnly ? undefined : name => {
         if (selectedTags.length >= 20) return
         const tag = { id: createTermId('tag'), name }
         setNewTags([...newTags, tag])
         selectTag(tag)
       }}/>
+    <fieldset className="full-width"><legend>Voedingswaarden per portie (optioneel)</legend>
+      <div className="form-row">{(Object.keys(nutritionLabels) as (keyof NutritionValues)[]).map(key => <label key={key}>{nutritionLabels[key]}
+        <input type="number" min="0" max="10000" step="any" value={draft.nutrition?.[key] ?? ''} onChange={event => {
+          const values = { ...draft.nutrition }
+          if (event.target.value === '') delete values[key]
+          else values[key] = Number(event.target.value)
+          setField('nutrition', Object.keys(values).length ? values : undefined)
+        }}/>
+      </label>)}</div>
+    </fieldset>
     <h3>Ingrediënten voor één portie</h3>
     {Object.entries(draft.amounts).map(([id, value]) => <div className="ingredient-edit" key={id}>
       <span>{ingredients[id].name}</span>
@@ -124,7 +136,7 @@ export function RecipeEditor({ recipe, busy, publicTerms, privateTerms, onSave, 
     </div>)}
     <TermPicker label="Ingrediënt zoeken of toevoegen" options={Object.values(ingredients)} maxLength={80}
       describe={ingredient => [ingredient.unit, publicTerms.ingredients.some(item => item.id === ingredient.id) ? 'Publiek' : 'Privé'].join(' · ')}
-      pick={addIngredient} create={name => { setNewIngredient(name); setUnit('') }}/>
+      pick={addIngredient} create={publicOnly ? undefined : name => { setNewIngredient(name); setUnit('') }}/>
     {newIngredient && <div className="form-row editor-add">
       <label>Eenheid voor {newIngredient}<select value={unit} onChange={event => setUnit(event.target.value)}>
         <option value="">Kies een eenheid</option>

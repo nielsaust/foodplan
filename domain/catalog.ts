@@ -48,6 +48,10 @@ export const ingredients: Ingredient[] = [
 ]
 
 export const ingredientById = Object.fromEntries(ingredients.map(item => [item.id, item]))
+export const dietTags = ['Glutenvrij', 'Vegetarisch', 'Vegan', 'Lactosevrij'] as const
+export const nutritionLabels = { kcal: 'kcal', protein: 'g eiwit', fiber: 'g vezels', carbs: 'g koolhydraten', fat: 'g vet' } as const
+export type NutritionValues = Partial<Record<keyof typeof nutritionLabels, number>>
+
 export type Recipe = {
   id: string
   title: string
@@ -57,6 +61,7 @@ export type Recipe = {
   theme: string
   image?: string
   description: string
+  nutrition?: NutritionValues
   source?: string | null
   tags: string[]
   tagIds?: string[]

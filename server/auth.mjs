@@ -1,3 +1,4 @@
+import { dietTags } from '../domain/catalog.ts'
 import { createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'node:crypto'
 import { promisify } from 'node:util'
 import { InputError } from './store.mjs'
@@ -100,6 +101,9 @@ export function createAuth(store, mail = sendMail) {
   if (!db.prepare('PRAGMA table_info(accounts)').all().some(column => column.name === 'unit_system')) {
     db.exec("ALTER TABLE accounts ADD COLUMN unit_system TEXT NOT NULL DEFAULT 'metric'")
   }
+  if (!db.prepare('PRAGMA table_info(accounts)').all().some(column => column.name === 'diet_preferences')) {
+    db.exec("ALTER TABLE accounts ADD COLUMN diet_preferences TEXT NOT NULL DEFAULT '[]'")
+  }
   const rootEmail = (process.env.FOODPLAN_SUPERUSER_EMAIL?.trim() || process.env.FOODPLAN_LEGACY_OWNER_EMAIL?.trim() || '').toLowerCase()
   const publicUrl = new URL(process.env.FOODPLAN_PUBLIC_URL || 'http://localhost:8787')
   const bootstrapEmail = process.env.FOODPLAN_LEGACY_OWNER_EMAIL?.trim().toLowerCase()
@@ -107,7 +111,7 @@ export function createAuth(store, mail = sendMail) {
     '; Path=/; HttpOnly; SameSite=Lax; Max-Age=' + seconds + (publicUrl.protocol === 'https:' ? '; Secure' : '')
   const byEmail = db.prepare('SELECT * FROM accounts WHERE email = ?')
   const findSession = db.prepare(`
-    SELECT a.id, a.email, a.name, m.group_id AS groupId, m.role, m.person_id AS personId, a.unit_system AS unitSystem,
+    SELECT a.id, a.email, a.name, m.group_id AS groupId, m.role, m.person_id AS personId, a.unit_system AS unitSystem, a.diet_preferences AS dietPreferences,
            (a.email = ? OR EXISTS (SELECT 1 FROM superusers su WHERE su.account_id = a.id)) AS superuser
     FROM sessions s JOIN accounts a ON a.id = s.account_id
     JOIN group_memberships m ON m.account_id = a.id
@@ -137,7 +141,7 @@ export function createAuth(store, mail = sendMail) {
   function session(request) {
     const hash = getSessionToken(request)
     const account = hash ? findSession.get(rootEmail, hash, Date.now()) : undefined
-    return account && { ...account, superuser: !!account.superuser }
+    return account && { ...account, dietPreferences: JSON.parse(account.dietPreferences), superuser: !!account.superuser }
   }
   function startSession(accountId) {
     const raw = token()
@@ -224,6 +228,9 @@ export function createAuth(store, mail = sendMail) {
       case 'admin-overview':
         requireSuperuser(current)
         return { ...management(), publications: moderation.list(), terms: moderation.pendingTerms() }
+      case 'public-recipe-edit':
+        requireSuperuser(current)
+        return moderation.editPublic(body.recipe)
       case 'publication-review':
         requireSuperuser(current)
         return moderation.review(body.id)
@@ -241,6 +248,8 @@ export function createAuth(store, mail = sendMail) {
       case 'profile': {
         const account = requireLogin(current)
         const name = label(body.name, 40, 'Vul je naam in.')
+        const diet = body.dietPreferences ?? account.dietPreferences
+        if (!Array.isArray(diet) || diet.some(tag => !dietTags.includes(tag))) throw new InputError('Kies geldige dieetvoorkeuren.')
         const unitSystem = body.unitSystem ?? account.unitSystem
         if (unitSystem !== 'metric' && unitSystem !== 'us') throw new InputError('Kies een maatstelsel.')
         const { state } = store.read(account.groupId)
@@ -251,7 +260,7 @@ export function createAuth(store, mail = sendMail) {
         }
         store.transaction(() => {
           if (person) store.addGroupPerson(account.groupId, { ...person, name, factor })
-          db.prepare('UPDATE accounts SET name = ?, unit_system = ? WHERE id = ?').run(name, unitSystem, account.id)
+          db.prepare('UPDATE accounts SET name = ?, unit_system = ?, diet_preferences = ? WHERE id = ?').run(name, unitSystem, JSON.stringify([...new Set(diet)]), account.id)
         })
         return { message: 'Profiel opgeslagen.' }
       }

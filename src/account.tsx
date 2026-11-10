@@ -4,14 +4,14 @@ import type { FormEvent } from 'react'
 import type { Person } from '../domain/planning'
 import { Icon } from './visuals'
 
-export type Account = { id: string; email: string; name: string; role: 'owner' | 'member'; groupId: string; personId: string; superuser: boolean; unitSystem: UnitSystem }
+export type Account = { id: string; email: string; name: string; role: 'owner' | 'member'; groupId: string; personId: string; superuser: boolean; unitSystem: UnitSystem; dietPreferences: string[] }
 type Screen = 'login' | 'register' | 'forgot' | 'accept' | 'reset' | 'accept-superuser'
 const titles: Record<Screen, string> = {
   login: 'Inloggen', register: 'Aanmelden', forgot: 'Wachtwoord vergeten',
   'accept-superuser': 'Beheeruitnodiging accepteren', accept: 'Account activeren', reset: 'Nieuw wachtwoord kiezen',
 }
 
-export async function authRequest(route: string, data: Record<string, string> = {}) {
+export async function authRequest(route: string, data: Record<string, unknown> = {}) {
   const response = await fetch('/api/auth/' + route, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
   })

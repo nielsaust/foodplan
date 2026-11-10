@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { ingredientAmount } from '../domain/planning'
 import type { Ingredient, Recipe } from '../domain/catalog'
@@ -9,6 +9,15 @@ type Publication = { id: string; title: string; groupName: string; status: 'pend
 type PendingTerm = { id: string; groupId: string; groupName: string; kind: 'ingredient' | 'tag'; name: string; unit?: string }
 type Review = { recipe: Recipe; ingredients: Record<string, Ingredient> }
 type Overview = { accounts: ManagedAccount[]; groups: ManagedGroup[]; publications: Publication[]; terms: PendingTerm[] }
+const sections = {
+  transfer: { title: 'Publieke recepten overzetten', description: 'Importeer of exporteer recepten via een JSON-bestand.' },
+  publications: { title: 'Receptpublicaties', description: 'Beoordeel inzendingen en beheer gepubliceerde recepten.' },
+  terms: { title: 'Ingrediënten en kenmerken', description: 'Bekijk nieuwe termen en maak ze publiek.' },
+  accounts: { title: 'Accounts', description: 'Beheer gebruikers en beheerrechten.' },
+  groups: { title: 'Groepen', description: 'Bekijk en beheer huishoudens.' },
+}
+type Section = keyof typeof sections
+
 const statuses = { pending: 'Te beoordelen', approved: 'Publiek', rejected: 'Afgewezen', archived: 'Verborgen' }
 const dateLabel = (value: number | null) => value ? new Intl.DateTimeFormat('nl-NL', { dateStyle: 'medium' }).format(value) : 'datum onbekend'
 
@@ -22,6 +31,17 @@ async function adminRequest<T>(route: string, body: Record<string, unknown> = {}
 }
 
 export function AdminPage({ accountId, groupId }: { accountId: string; groupId: string }) {
+  const [section, setSection] = useState<Section>()
+  const heading = useRef<HTMLHeadingElement>(null)
+  function navigate(next?: Section) {
+    setSection(next)
+    setMessage('')
+    setError('')
+  }
+  useEffect(() => {
+    heading.current?.focus({ preventScroll: true })
+    window.scrollTo(0, 0)
+  }, [section])
   const [catalog, setCatalog] = useState<Recipe[]>([])
   const [bundle, setBundle] = useState<{ recipes: Recipe[] }>()
   const [exportIds, setExportIds] = useState<string[]>([])
@@ -60,12 +80,32 @@ export function AdminPage({ accountId, groupId }: { accountId: string; groupId: 
     event.preventDefault()
     void change(route, { ...Object.fromEntries(new FormData(event.currentTarget)), ...extras })
   }
+  const pending = overview?.publications.filter(item => item.status === 'pending').length ?? 0
+  const newTerms = overview?.terms?.length ?? 0
+  const notifications: Partial<Record<Section, string>> = {
+    publications: pending ? pending + ' te beoordelen' : undefined,
+    terms: newTerms ? newTerms + (newTerms === 1 ? ' nieuwe term' : ' nieuwe termen') : undefined,
+  }
   return <>
-    <div className="page-heading"><div className="eyebrow">Superuser</div><h1>Beheer</h1><p>Beheer accounts, groepen en de openbare receptencatalogus.</p></div>
+    {section && <button className="button admin-back" disabled={busy} onClick={() => navigate()}>← Terug naar dashboard</button>}
+    <div className="page-heading">
+      <div className="eyebrow">Superuser{section && ' · Beheer'}</div>
+      <h1 ref={heading} tabIndex={-1}>{section ? sections[section].title : 'Beheer'}</h1>
+      <p>{section ? sections[section].description : 'Beheer accounts, groepen en de openbare receptencatalogus.'}</p>
+    </div>
     {error && <p className="alert" role="alert">{error}</p>}
     {message && <p role="status">{message}</p>}
-    <section className="panel people-panel">
-      <h2>Publieke recepten overzetten</h2>
+    {!section && <div className="admin-dashboard">
+      {(Object.keys(sections) as Section[]).map(key => <button className="panel admin-tile" key={key} onClick={() => navigate(key)}>
+        <span className="admin-tile-heading">
+          <strong>{sections[key].title}</strong>
+          {notifications[key] && <span className="admin-badge">{notifications[key]}</span>}
+        </span>
+        <span>{sections[key].description}</span>
+      </button>)}
+    </div>}
+    <section className="panel people-panel" hidden={section !== "transfer"}>
+
       <p>Verplaats geselecteerde recepten met hun ingrediënten en kenmerken via een JSON-bestand. Bestaande recepten met hetzelfde ID worden overgeslagen.</p>
       <h3>Exporteren</h3>
       {catalog.map(recipe => <label className="check-row" key={recipe.id}>
@@ -102,9 +142,8 @@ export function AdminPage({ accountId, groupId }: { accountId: string; groupId: 
       </label>)}
       <button className="button primary" disabled={busy || !importIds.length} onClick={() => void change('catalog-import', { bundle, ids: importIds })}>Importeer geselecteerde recepten</button>
     </section>
-    <div className="admin-grid">
-      <section className="panel people-panel">
-        <h2>Receptpublicaties</h2>
+      <section className="panel people-panel" hidden={section !== "publications"}>
+
         {!overview?.publications.length && <p>Geen publicaties.</p>}
         {overview?.publications.map(item => <article className="admin-row" key={item.id}>
           <strong>{item.title}</strong><p>{item.groupName} · {statuses[item.status]} · {dateLabel(item.created)}</p>
@@ -129,18 +168,22 @@ export function AdminPage({ accountId, groupId }: { accountId: string; groupId: 
           </div>}
         </article>)}
       </section>
-      <section className="panel people-panel">
-        <h2>Nieuwe ingrediënten en kenmerken</h2>
-        <p>Publieke termen worden zichtbaar voor alle groepen.</p>
+      <section className="panel people-panel" hidden={section !== "terms"}>
+
+        <p>Pas desgewenst de publieke naam aan. Publiceer de gekoppelde termen voordat je een recept goedkeurt.</p>
         {!overview?.terms?.length && <p>Geen nieuwe termen om te publiceren.</p>}
         {overview?.terms?.map(term => <article className="admin-row" key={term.groupId + '/' + term.id}>
-          <strong>{term.name}{term.unit && ' · ' + term.unit}</strong>
+
           <p>{term.kind === 'ingredient' ? 'Ingrediënt' : 'Kenmerk'} · {term.groupName}</p>
-          <button className="button" disabled={busy} onClick={() => void change('term-publish', { groupId: term.groupId, id: term.id, kind: term.kind })}>Publiek maken</button>
+          <form className="form-row" onSubmit={event => form(event, 'term-publish', { groupId: term.groupId, id: term.id, kind: term.kind })}>
+            <label>Publieke naam<input name="name" defaultValue={term.name} required maxLength={term.kind === 'ingredient' ? 80 : 40}/></label>
+            {term.unit && <small>Eenheid: {term.unit}</small>}
+            <button className="button" disabled={busy}>Publiek maken</button>
+          </form>
         </article>)}
       </section>
-      <section className="panel people-panel">
-        <h2>Accounts</h2>
+      <section className="panel people-panel" hidden={section !== "accounts"}>
+
         {overview?.accounts.map(item => <article className="admin-row" key={item.id}>
           <strong>{item.name}{item.superuser ? ' · Superuser' : ''}</strong>
           <p>{item.email} · {overview.groups.find(group => group.id === item.groupId)?.name} · {item.role === 'owner' ? 'Eigenaar' : 'Lid'} · {dateLabel(item.created)}</p>
@@ -154,8 +197,8 @@ export function AdminPage({ accountId, groupId }: { accountId: string; groupId: 
           <button className="button primary" disabled={busy}>Uitnodigen</button>
         </form>
       </section>
-      <section className="panel people-panel">
-        <h2>Groepen</h2>
+      <section className="panel people-panel" hidden={section !== "groups"}>
+
         {overview?.groups.map(item => <article className="admin-row" key={item.id + item.name}>
           <p>{item.members} gekoppelde accounts · {dateLabel(item.created)}</p>
           <form className="form-row" onSubmit={event => form(event, 'admin-rename', { id: item.id })}>
@@ -165,6 +208,5 @@ export function AdminPage({ accountId, groupId }: { accountId: string; groupId: 
           <button className="button" disabled={busy || item.id === groupId} onClick={() => void change('admin-block', { kind: 'group', id: item.id, blocked: !item.blocked })}>{item.blocked ? 'Groep deblokkeren' : 'Groep blokkeren'}</button>
         </article>)}
       </section>
-    </div>
   </>
 }

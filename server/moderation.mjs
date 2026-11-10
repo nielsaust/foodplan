@@ -6,6 +6,7 @@ import { InputError, validateRecipe, validateTerm } from './store.mjs'
 export function createModeration(store) {
   const { db } = store
   db.exec(`
+    CREATE TABLE IF NOT EXISTS public_recipe_edits (id TEXT PRIMARY KEY, recipe TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS recipe_publications (
       id TEXT PRIMARY KEY,
       group_id TEXT NOT NULL REFERENCES group_states(id),
@@ -15,15 +16,41 @@ export function createModeration(store) {
       created INTEGER NOT NULL
     );
   `)
+  function canonicalTags(recipe) {
+    if (!recipe.tagIds) return recipe.tags
+    const terms = new Map([...baseTags, ...store.publicTerms().tags].map(term => [term.id, term.name]))
+    return recipe.tagIds.map((id, index) => terms.get(id) ?? recipe.tags[index])
+  }
   const publicRecipes = () => [
-    ...recipes,
+    ...recipes.map(recipe => {
+      const edit = db.prepare('SELECT recipe FROM public_recipe_edits WHERE id = ?').get(recipe.id)
+      return edit ? JSON.parse(edit.recipe) : recipe
+    }),
     ...db.prepare("SELECT recipe FROM recipe_publications WHERE status = 'approved' ORDER BY created DESC").all().map(row => {
       const { catalogSnapshot, ...recipe } = JSON.parse(row.recipe)
-      return recipe
+      return { ...recipe, tags: canonicalTags(recipe) }
     }),
   ]
   return {
     publicRecipes,
+    editPublic(recipe) {
+      const terms = store.publicTerms()
+      const ingredients = { ...ingredientById, ...Object.fromEntries(terms.ingredients.map(term => [term.id, term])) }
+      const tags = Object.fromEntries([...baseTags, ...terms.tags].map(term => [term.id, term]))
+      validateRecipe(recipe, ingredients, tags)
+      const { id, title, subtitle, cuisine, description, minutes, theme, image, tagIds, amounts, steps, translations, source, nutrition } = recipe
+      const labels = tagIds ? tagIds.map(key => tags[key].name) : recipe.tags
+      if (labels.some(name => !Object.values(tags).some(tag => nameKey(tag.name) === nameKey(name)))) {
+        throw new InputError('Gebruik alleen publieke kenmerken.')
+      }
+      const data = JSON.stringify({ id, title, subtitle, cuisine, description, minutes, theme, image, tagIds, amounts, steps, translations, source, nutrition, tags: labels })
+      if (recipes.some(item => item.id === id)) {
+        db.prepare('INSERT INTO public_recipe_edits VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET recipe = excluded.recipe').run(id, data)
+      } else if (!db.prepare("UPDATE recipe_publications SET recipe = ? WHERE id = ? AND status = 'approved'").run(data, id).changes) {
+        throw new InputError('Dit recept is niet meer publiek.')
+      }
+      return { recipe: JSON.parse(data) }
+    },
     exportCatalog(ids) {
       if (!Array.isArray(ids) || !ids.length || ids.length > 500) throw new InputError('Selecteer publieke recepten.')
       const selected = publicRecipes().filter(recipe => ids.includes(recipe.id))
@@ -69,9 +96,9 @@ export function createModeration(store) {
         const insert = db.prepare("INSERT INTO recipe_publications VALUES (?, ?, ?, ?, 'approved', ?)")
         for (const recipe of additions) {
           validateRecipe(recipe, ingredients, tags)
-          const { id, title, subtitle, cuisine, description, minutes, theme, image, tagIds, amounts, steps, translations, source } = recipe
+          const { id, title, subtitle, cuisine, description, minutes, theme, image, tagIds, amounts, steps, translations, source, nutrition } = recipe
           const labels = tagIds ? tagIds.map(key => tags[key].name) : recipe.tags
-          insert.run(id, groupId, id, JSON.stringify({ id, title, subtitle, cuisine, description, minutes, theme, image, tagIds, amounts, steps, translations, source, tags: labels }), Date.now())
+          insert.run(id, groupId, id, JSON.stringify({ id, title, subtitle, cuisine, description, minutes, theme, image, tagIds, amounts, steps, translations, source, nutrition, tags: labels }), Date.now())
         }
         return { message: additions.length + ' geïmporteerd, ' + (selected.length - additions.length) + ' overgeslagen (al aanwezig).' }
       })
@@ -87,7 +114,7 @@ export function createModeration(store) {
         WHERE NOT EXISTS (SELECT 1 FROM public_terms p WHERE p.id = t.key)
       `).all().map(({ data, ...row }) => ({ ...row, ...JSON.parse(data) }))
     },
-    publishTerm({ groupId, id, kind }) {
+    publishTerm({ groupId, id, kind, name }) {
       if (typeof groupId !== 'string' || typeof id !== 'string' || !['ingredient', 'tag'].includes(kind)) {
         throw new InputError('Kies een ingrediënt of kenmerk.')
       }
@@ -95,7 +122,10 @@ export function createModeration(store) {
       const state = row && JSON.parse(row.data)
       const terms = kind === 'ingredient' ? state?.customIngredients : state?.customTags
       if (!Object.hasOwn(terms ?? {}, id)) throw new InputError('Deze term bestaat niet meer.')
-      db.prepare('INSERT OR IGNORE INTO public_terms VALUES (?, ?, ?)').run(id, kind, JSON.stringify(terms[id]))
+      const term = validateTerm({ ...terms[id], name: name === undefined ? terms[id].name : name }, kind)
+      if (!db.prepare('INSERT OR IGNORE INTO public_terms VALUES (?, ?, ?)').run(id, kind, JSON.stringify(term)).changes) {
+        throw new InputError('Deze term is al gepubliceerd.')
+      }
     },
     copy(groupId, { id, copyId }) {
       const recipe = publicRecipes().find(item => item.id === id)
@@ -135,7 +165,7 @@ export function createModeration(store) {
       const row = db.prepare('SELECT recipe FROM recipe_publications WHERE id = ?').get(id)
       if (!row) throw new InputError('Publicatie bestaat niet.')
       const { catalogSnapshot, ...recipe } = JSON.parse(row.recipe)
-      return { recipe, ingredients: { ...ingredientById, ...Object.fromEntries(store.publicTerms().ingredients.map(term => [term.id, term])), ...catalogSnapshot?.ingredients } }
+      return { recipe: { ...recipe, tags: canonicalTags(recipe) }, ingredients: { ...ingredientById, ...Object.fromEntries(store.publicTerms().ingredients.map(term => [term.id, term])), ...catalogSnapshot?.ingredients } }
     },
     decide({ id, status }) {
       if (typeof id !== 'string') throw new InputError('Kies een publicatie.')

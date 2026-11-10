@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { ingredientById, recipes } from '../domain/catalog.ts'
+import { ingredientById, recipes, nutritionLabels } from '../domain/catalog.ts'
 import { baseTags, emptyTerms, nameKey } from '../domain/terms.ts'
 import { isUnit } from '../domain/units.ts'
 import { addDays, datesFrom, diners, householdRecipes, purchaseKey, shoppingItems, today, weekStart } from '../domain/planning.ts'
@@ -103,6 +103,8 @@ export function validateRecipe(recipe, ingredients = ingredientById, tags = base
   requireInput(recipe && idOk(recipe.id) && nameOk(recipe.title, 100) &&
     typeof recipe.subtitle === 'string' && recipe.subtitle.length <= 160 &&
     nameOk(recipe.cuisine, 80) && nameOk(recipe.description, 1600) && validSource(recipe.source) &&
+    (recipe.nutrition === undefined || (record(recipe.nutrition) && Object.entries(recipe.nutrition).every(([key, value]) =>
+      Object.hasOwn(nutritionLabels, key) && Number.isFinite(value) && value >= 0 && value <= 10000))) &&
     Number.isInteger(recipe.minutes) && recipe.minutes >= 1 && recipe.minutes <= 600 &&
     ['gold', 'rose', 'green'].includes(recipe.theme) &&
     (recipe.image === undefined || (typeof recipe.image === 'string' && recipe.image.length <= 140000 &&
@@ -212,9 +214,9 @@ function apply(state, action, publicTerms = emptyTerms) {
     case 'saveRecipe': {
       const recipe = prepareTerms(state, action.recipe, action.terms ?? emptyTerms, publicTerms)
       requireInput(!recipes.some(starter => starter.id === recipe.id) || Object.hasOwn(state.recipeEdits ?? {}, recipe.id))
-      const { image, id, title, subtitle, cuisine, description, minutes, theme, tags, tagIds, amounts, steps, translations, source } = recipe
+      const { image, id, title, subtitle, cuisine, description, minutes, theme, tags, tagIds, amounts, steps, translations, source, nutrition } = recipe
       state.recipeEdits = { ...state.recipeEdits, [id]: {
-        id, image, tagIds, translations, title: title.trim(), subtitle: subtitle.trim(), cuisine: cuisine.trim(),
+        id, image, tagIds, translations, nutrition, title: title.trim(), subtitle: subtitle.trim(), cuisine: cuisine.trim(),
         description: description.trim(), source: source?.trim() ?? source, minutes, theme,
         tags: [...new Set(tags.map(tag => tag.trim()))], amounts, steps: steps.map(step => step.trim()),
       } }

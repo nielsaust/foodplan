@@ -1,16 +1,24 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import { nameKey } from '../domain/terms'
 
-export function TermPicker<T extends { id: string; name: string }>({ label, options, describe, pick, create, maxLength }: {
+export function TermPicker<T extends { id: string; name: string }>({ label, options, describe, pick, create, maxLength, search, onSearch, expanded = false, disabled = false, thumbnail }: {
   label: string
   options: T[]
   describe: (option: T) => string
   pick: (option: T) => void
-  create: (name: string) => void
+  search?: string
+  onSearch?: (query: string) => void
+  expanded?: boolean
+  disabled?: boolean
+  thumbnail?: (option: T) => ReactNode
+  create?: (name: string) => void
   maxLength: number
 }) {
   const id = useId()
-  const [query, setQuery] = useState('')
+  const [localQuery, setLocalQuery] = useState('')
+  const query = search ?? localQuery
+  const setQuery = onSearch ?? setLocalQuery
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(-1)
   const current = useRef<HTMLLIElement>(null)
@@ -19,26 +27,27 @@ export function TermPicker<T extends { id: string; name: string }>({ label, opti
   const ranked = options.filter(option => nameKey(option.name).includes(term))
     .sort((a, b) => Number(nameKey(b.name).startsWith(term)) - Number(nameKey(a.name).startsWith(term)) || a.name.localeCompare(b.name, 'nl'))
   const matches = ranked.slice(0, 12)
-  const canCreate = !!term && !ranked.some(option => nameKey(option.name) === term)
+  const canCreate = !!create && !!term && !ranked.some(option => nameKey(option.name) === term)
   const size = matches.length + Number(canCreate)
-  const visible = open && size > 0
+  const visible = !expanded && !disabled && open && size > 0
   useEffect(() => { current.current?.scrollIntoView({ block: 'nearest' }) }, [active])
   function select(index: number) {
     if (index < 0 || index >= size) return
     if (index < matches.length) pick(matches[index])
-    else create(name)
+    else create?.(name)
     setQuery('')
     setOpen(false)
     setActive(-1)
   }
   return <div className="term-picker">
     <label htmlFor={id}>{label}</label>
-    <input id={id} role="combobox" aria-autocomplete="list" aria-expanded={visible}
+    <input id={id} disabled={disabled} role={expanded ? undefined : "combobox"} aria-autocomplete={expanded ? undefined : "list"} aria-expanded={expanded ? undefined : visible}
       aria-controls={visible ? id + '-options' : undefined} aria-activedescendant={visible && active >= 0 ? id + '-option-' + active : undefined}
       autoComplete="off" placeholder="Typ om te zoeken…" maxLength={maxLength} value={query}
       onFocus={() => setOpen(true)} onBlur={() => { setOpen(false); setActive(-1) }}
       onChange={event => { setQuery(event.target.value); setOpen(true); setActive(-1) }}
       onKeyDown={event => {
+        if (expanded) return
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
           if (!size) return
           event.preventDefault()
@@ -60,7 +69,7 @@ export function TermPicker<T extends { id: string; name: string }>({ label, opti
         ...(canCreate ? [{ key: 'new', name: '‘' + name + '’ toevoegen', detail: 'Privé' }] : [])].map((option, index) =>
         <li key={option.key} id={id + '-option-' + index} role="option" aria-selected={active === index}
           ref={active === index ? current : undefined} onMouseDown={event => event.preventDefault()} onClick={() => select(index)}>
-          <span>{option.name}</span><small>{option.detail}</small>
+          <span className="term-option-name">{matches[index] && thumbnail?.(matches[index])}{option.name}</span><small>{option.detail}</small>
         </li>)}
     </ul>}
   </div>

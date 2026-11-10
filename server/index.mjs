@@ -48,7 +48,7 @@ const server = createServer(async (request, response) => {
       if (request.headers['content-type'] !== 'application/json' || request.headers['sec-fetch-site'] === 'cross-site') {
         return json(response, 415, { error: 'Verstuur gegevens als JSON vanaf deze app.' })
       }
-      const limit = (restore || authRoute === 'catalog-import') ? 10 * 1024 * 1024 : authRoute ? 8192 : 256 * 1024
+      const limit = (restore || authRoute === 'catalog-import') ? 10 * 1024 * 1024 : authRoute && authRoute !== 'public-recipe-edit' ? 8192 : 256 * 1024
       let body = ''
       for await (const part of request.setEncoding('utf8')) {
         body += part
