@@ -137,7 +137,7 @@ progress { width: 100%; accent-color: var(--green); }
 .fine-print { margin-top: 16px; color: var(--muted); font-size: .8rem; }
 .people-panel { max-width: 720px; }
 .people-panel h3 { margin: 18px 0 8px; }
-.person-form { padding: 10px 0; border-bottom: 1px solid var(--line); }
+.person-form { padding: 10px 0; }
 .person-form label:first-child { flex: 1; min-width: 150px; }
 .person-form label:nth-child(2) { width: 96px; }
 .empty, .alert { padding: 16px; margin: 12px 0; border-radius: 10px; color: var(--muted); background: #eef1e7; }
@@ -680,4 +680,28 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 @media (max-width: 700px) {
   .hero-recipe-photo { inset: 0; opacity: .18; }
   .hero:has(.hero-recipe-photo) .hero-copy { max-width: 100%; }
+}
+
+/* Household members share fixed action columns, including linked accounts. */
+.household-name { margin: 20px 0; padding-bottom: 24px; border-bottom: 1px solid var(--line); }
+.household-name label { flex: 1; min-width: 0; }
+.housemate { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 20px 0; }
+.housemate-owner { color: var(--green); font-size: .85rem; font-weight: 700; }
+.housemate > .person-form { display: grid; grid-template-columns: minmax(0, 1fr) 96px auto 120px; gap: 10px; align-items: end; padding: 0; }
+.housemate > .person-form label:first-child { min-width: 0; }
+.housemate > .person-form label:nth-child(2) { width: auto; min-width: 0; }
+.housemate > .person-form .button { padding-inline: 12px; }
+.housemate > .person-form::after { content: ""; }
+.housemate > .person-form:has(> button.danger)::after { display: none; }
+.housemate-invitation { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; min-height: 40px; }
+.housemate-invitation small { overflow-wrap: anywhere; }
+.invite-modal-form { display: grid; gap: 16px; margin-top: 16px; }
+@media (max-width: 620px) {
+  .housemate > .person-form { grid-template-columns: minmax(0, 1fr) 80px auto auto; gap: 8px; }
+  .housemate > .person-form .button { padding-inline: 10px; font-size: .85rem; }
+  .housemate > .person-form label { font-size: .85rem; }
+}
+@media (max-width: 400px) {
+  .housemate > .person-form { grid-template-columns: minmax(0, 1fr) 80px; }
+  .housemate > .person-form::after { display: none; }
 }

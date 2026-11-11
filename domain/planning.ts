@@ -11,6 +11,7 @@ export type State = {
   household: { id: string; name: string }
   includeStarterRecipes?: boolean
   linkedPeople?: string[]
+  ownerPeople?: string[]
   customIngredients?: Record<string, Ingredient>
   customTags?: Record<string, Tag>
   publicRecipes?: Record<string, Recipe>
@@ -32,6 +33,7 @@ export const canScheduleRecipe = (state: State, id: string) =>
 export const householdIngredients = (state: State) => ({ ...ingredientById, ...state.publicIngredients, ...state.customIngredients })
 
 export type Action =
+  | { type: 'renameHousehold'; name: string }
   | { type: 'clearDatabase' }
   | { type: 'copyPublicRecipe'; id: string; copyId: string }
   | { type: 'deleteRecipe'; id: string }

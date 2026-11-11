@@ -181,6 +181,10 @@ function apply(state, action, publicTerms = emptyTerms) {
         recipeEdits: {}, customIngredients: {}, customTags: {}, includeStarterRecipes: false,
       })
       break
+    case 'renameHousehold':
+      requireInput(nameOk(action.name, 80))
+      state.household.name = action.name.trim()
+      break
     case 'person': {
       requireInput(idOk(action.id) && nameOk(action.name, 40) &&
         Number.isFinite(action.factor) && action.factor >= 0.25 && action.factor <= 4)

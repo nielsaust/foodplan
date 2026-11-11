@@ -171,6 +171,9 @@ export function createAuth(store, mail = sendMail) {
         groep: group || 'je huishouden',
         geldigheid: lifetime === 7 * day ? '7 dagen' : lifetime === day ? '24 uur' : '1 uur',
       }, url.href) })
+      if (kind === 'invite') db.prepare("DELETE FROM account_links WHERE kind = 'invite' AND hash <> ? AND json_extract(payload, '$.groupId') = ? AND (email = ? OR (? IS NOT NULL AND json_extract(payload, '$.personId') = ?))")
+        .run(hash, payload.groupId, email, payload.personId, payload.personId)
+
     } catch {
       removeLink.run(hash)
       throw new AuthError(503, 'E-mail versturen is nu niet gelukt. Probeer het later opnieuw.')
@@ -180,6 +183,9 @@ export function createAuth(store, mail = sendMail) {
   function linkedPeople(groupId) {
     return db.prepare('SELECT person_id AS id FROM group_memberships WHERE group_id = ? AND person_id IS NOT NULL')
       .all(groupId).map(row => row.id)
+  }
+  function ownerPeople(groupId) {
+    return db.prepare("SELECT person_id AS id FROM group_memberships WHERE group_id = ? AND role = 'owner' AND person_id IS NOT NULL").all(groupId).map(row => row.id)
   }
   function management() {
     const accounts = db.prepare(`
@@ -370,6 +376,13 @@ export function createAuth(store, mail = sendMail) {
         }
         return neutralMail
       }
+      case 'invitations':
+        requireOwner(current)
+        return { invitations: db.prepare("SELECT email, expires, json_extract(payload, '$.personId') AS personId FROM account_links WHERE kind = 'invite' AND expires > ? AND json_extract(payload, '$.groupId') = ?").all(Date.now(), current.groupId) }
+      case 'invite-revoke':
+        requireOwner(current)
+        db.prepare("DELETE FROM account_links WHERE kind = 'invite' AND json_extract(payload, '$.groupId') = ? AND json_extract(payload, '$.personId') = ?").run(current.groupId, body.personId)
+        return { message: 'Uitnodiging ingetrokken.' }
       case 'invite': {
         requireOwner(current)
         const email = emailAddress(body.email)
@@ -453,5 +466,5 @@ export function createAuth(store, mail = sendMail) {
       default: throw new AuthError(404, 'Pagina niet gevonden.')
     }
   }
-  return { session, handle, linkedPeople, moderation }
+  return { session, handle, linkedPeople, ownerPeople, moderation }
 }

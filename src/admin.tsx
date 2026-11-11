@@ -1,3 +1,4 @@
+import { pagePaths } from '../domain/navigation'
 import { Icon } from './visuals'
 import { nameKey, publicBaseTerms } from '../domain/terms'
 import { useEffect, useId, useRef, useState } from 'react'
@@ -33,9 +34,23 @@ async function adminRequest<T>(route: string, body: Record<string, unknown> = {}
 }
 
 export function AdminPage({ accountId, groupId, openRecipe, revision }: { revision: number; accountId: string; groupId: string; openRecipe: (review: Review, status: Publication["status"]) => void }) {
-  const [section, setSection] = useState<Section>()
+  const readSection = () => {
+    const value = window.location.pathname.split('/')[2] || new URLSearchParams(window.location.search).get('section')
+    return value && Object.hasOwn(sections, value) ? value as Section : undefined
+  }
+  const [section, setSection] = useState<Section | undefined>(readSection)
+  useEffect(() => {
+    const restore = () => setSection(readSection())
+    window.addEventListener('popstate', restore)
+    return () => window.removeEventListener('popstate', restore)
+  }, [])
   const heading = useRef<HTMLHeadingElement>(null)
   function navigate(next?: Section) {
+    const url = new URL(window.location.href)
+    url.pathname = pagePaths.beheer + (next ? '/' + next : '')
+    url.searchParams.delete('page')
+    url.searchParams.delete('section')
+    window.history.pushState(null, '', url)
     setSection(next)
     setMessage('')
     setError('')

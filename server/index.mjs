@@ -1,3 +1,4 @@
+import { isAppPath } from '../domain/navigation.ts'
 import { createServer } from 'node:http'
 import { createReadStream, statSync } from 'node:fs'
 import { extname, resolve, sep } from 'node:path'
@@ -9,7 +10,7 @@ import { InputError, openStore } from './store.mjs'
 const store = openStore(process.env.DATABASE_PATH || 'data/aan-tafel.sqlite')
 const auth = createAuth(store)
 function groupSnapshot(groupId, snapshot = store.read(groupId)) {
-  return { ...snapshot, state: { ...store.withCatalog(snapshot.state), linkedPeople: auth.linkedPeople(groupId) } }
+  return { ...snapshot, state: { ...store.withCatalog(snapshot.state), linkedPeople: auth.linkedPeople(groupId), ownerPeople: auth.ownerPeople(groupId) } }
 }
 const root = resolve('dist')
 const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' }
@@ -63,7 +64,7 @@ const server = createServer(async (request, response) => {
       }
       const current = auth.session(request)
       if (!current) throw new AuthError(401, 'Log in om verder te gaan.')
-      if (restore || ['clearDatabase', 'person', 'removePerson'].includes(action?.type)) requireOwner(current)
+      if (restore || ['renameHousehold', 'clearDatabase', 'person', 'removePerson'].includes(action?.type)) requireOwner(current)
       if (!restore && action?.type === 'removePerson' && auth.linkedPeople(current.groupId).includes(action.id)) {
         throw new InputError('Deze huisgenoot heeft een gekoppeld account.')
       }
@@ -74,7 +75,7 @@ const server = createServer(async (request, response) => {
       return json(response, 200, groupSnapshot(current.groupId, store.write(current.groupId, action, restore)))
     }
 
-    const file = resolve(root, '.' + (path === '/' ? '/index.html' : path))
+    const file = resolve(root, '.' + (isAppPath(path) ? '/index.html' : path))
     if (request.method !== 'GET' || !file.startsWith(root + sep) || !statSync(file, { throwIfNoEntry: false })?.isFile()) {
       return json(response, 404, { error: 'Pagina niet gevonden.' })
     }

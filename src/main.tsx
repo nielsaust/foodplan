@@ -1,3 +1,4 @@
+import { pagePaths, pageFromPath, adminSections } from '../domain/navigation'
 import { TermPicker } from './term-picker'
 import { nameKey } from '../domain/terms'
 import { emptyTerms, publicBaseTerms } from '../domain/terms'
@@ -11,7 +12,7 @@ import type { Ingredient, Recipe } from '../domain/catalog'
 import { addDays, amount, ingredientAmount, householdIngredients, canScheduleRecipe, datesFrom, diners, formatDate, householdRecipes, portions, shoppingItems, today, weekStart } from '../domain/planning'
 import type { Action, Person, State } from '../domain/planning'
 import { Icon, Plate } from './visuals'
-import { AccountScreen, InviteForm, authRequest, hasAccountLink } from './account'
+import { AccountScreen, authRequest, hasAccountLink } from './account'
 import type { Account } from './account'
 import { AdminPage } from './admin'
 import { nutrition } from '../domain/nutrition'
@@ -28,7 +29,7 @@ const tabs: { id: Tab; label: string; icon: string }[] = [
   { id: 'planning', label: 'Weekplanning', icon: 'calendar' },
   { id: 'recepten', label: 'Recepten', icon: 'book' },
   { id: 'boodschappen', label: 'Boodschappen', icon: 'basket' },
-  { id: 'huisgenoten', label: 'Huisgenoten', icon: 'people' },
+  { id: 'huisgenoten', label: 'Huishouden', icon: 'people' },
 ]
 const formatShort = (date: string) => formatDate(date, { day: 'numeric', month: 'short' })
 const formatLong = (date: string) => formatDate(date, { weekday: 'long', day: 'numeric', month: 'long' })
@@ -511,6 +512,53 @@ function MealRecipePicker({ recipes, privateIds, busy, choose }: {
   </>
 }
 
+function HousemateInvitation({ person, linked }: { person: Person; linked: boolean }) {
+  const [open, setOpen] = useState(false)
+  const [email, setEmail] = useState('')
+  const [invitation, setInvitation] = useState<{ email: string; expires: number }>()
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+  async function load() {
+    const result = await authRequest('invitations') as unknown as { invitations: { personId: string; email: string; expires: number }[] }
+    const item = result.invitations.find((item: { personId: string }) => item.personId === person.id)
+    setInvitation(item)
+    if (item) setEmail(item.email)
+  }
+  useEffect(() => { if (!linked) void load().catch(failure => setError(failure.message)) }, [person.id, linked])
+  async function act(route: string) {
+    setPending(true)
+    setError('')
+    setMessage('')
+    try {
+      const result = await authRequest(route, { personId: person.id, email })
+      await load()
+      setMessage(result.message ?? '')
+    } catch (failure) { setError(failure instanceof Error ? failure.message : 'Aanvraag mislukt.') }
+    finally { setPending(false) }
+  }
+  return <div className="housemate-invitation">
+    {linked ? <small>Account gekoppeld</small> : <>
+      <button className="button" onClick={() => setOpen(true)}>{invitation ? 'Uitnodiging beheren' : 'Uitnodigen'}</button>
+      <small>{invitation ? 'Uitgenodigd · ' + invitation.email : 'Zonder account'}</small>
+      {error && !open && <small role="alert">{error}</small>}
+    </>}
+    {open && <Dialog title={person.name + ' uitnodigen'} close={() => { if (!pending) setOpen(false) }}>
+      <p>Het account wordt gekoppeld aan {person.name}.</p>
+      {invitation && <p>Uitnodiging verstuurd naar {invitation.email}. Geldig tot {new Date(invitation.expires).toLocaleDateString('nl-NL')}.</p>}
+      <form className="invite-modal-form" onSubmit={event => { event.preventDefault(); void act('invite') }}>
+        <label>E-mailadres<input type="email" required maxLength={254} value={email} disabled={pending} onChange={event => setEmail(event.target.value)}/></label>
+        <div className="form-row">
+          <button className="button primary" disabled={pending}>{invitation ? 'Opnieuw versturen' : 'Uitnodiging versturen'}</button>
+          {invitation && <button type="button" className="button danger" disabled={pending} onClick={() => void act('invite-revoke')}>Intrekken</button>}
+        </div>
+      </form>
+      {error && <p className="alert" role="alert">{error}</p>}
+      {message && <p role="status">{message}</p>}
+    </Dialog>}
+  </div>
+}
+
 function PersonForm({ person, save, busy, linked = false }: {
   person?: Person; save: (action: Action) => Promise<boolean>; busy: boolean; linked?: boolean
 }) {
@@ -527,7 +575,7 @@ function PersonForm({ person, save, busy, linked = false }: {
     <label>Naam<input value={name} maxLength={40} required placeholder="Naam huisgenoot" onChange={event => setName(event.target.value)}/></label>
     <label>Portiefactor<input type="number" value={factor} min={0.25} max={4} step={0.25} required onChange={event => setFactor(event.target.value)}/></label>
     <button className={'button ' + (person ? '' : 'primary')} disabled={busy}>{person ? 'Opslaan' : 'Toevoegen'}</button>
-    {person && !linked && <button type="button" className="button text danger" disabled={busy} onClick={() => {
+    {person && !linked && <button type="button" className="button danger" disabled={busy} onClick={() => {
       if (removing) void save({ type: 'removePerson', id: person.id })
       else setRemoving(true)
     }}>{removing ? 'Bevestig verwijderen' : 'Verwijderen'}</button>}
@@ -706,9 +754,25 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
   const [adminRevision, setAdminRevision] = useState(0)
   const [savingPublic, setSavingPublic] = useState(false)
   const [publicRecipes, setPublicRecipes] = useState<Recipe[]>(starterRecipes)
-  const [inviting, setInviting] = useState<string>()
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [tab, setTab] = useState<Tab>('planning')
+  const readPage = (): Tab => pageFromPath(window.location.pathname.replace(/\/$/, '') || '/')
+  const [tab, setTab] = useState<Tab>(readPage)
+  useEffect(() => {
+    const url = new URL(window.location.href)
+    const legacy = url.searchParams.get('page')
+    if (legacy && Object.hasOwn(pagePaths, legacy)) {
+      url.pathname = pagePaths[legacy as Tab]
+      const section = url.searchParams.get('section')
+      if (legacy === 'beheer' && adminSections.includes(section as typeof adminSections[number])) url.pathname += '/' + section
+      url.searchParams.delete('page')
+      url.searchParams.delete('section')
+      window.history.replaceState(null, '', url)
+      setTab(readPage())
+    }
+    const restorePage = () => { setTab(readPage()); setModal(undefined); setSettingsOpen(false); setProfileOpen(false) }
+    window.addEventListener('popstate', restorePage)
+    return () => window.removeEventListener('popstate', restorePage)
+  }, [])
   const [week, setWeek] = useState(() => weekStart(today()))
   const [modal, setModal] = useState<Modal>()
   const [notice, setNotice] = useState('')
@@ -757,7 +821,13 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
   const todayRecipe = todayMeal && catalog[todayMeal.recipeId]
   const days = datesFrom(week, 7)
   const planned = state?.meals.filter(meal => days.includes(meal.date)).length ?? 0
-  const navigate = (id: Tab) => { setTab(id); setNotice(''); window.scrollTo(0, 0) }
+  const navigate = (id: Tab) => {
+    const url = new URL(window.location.href)
+    url.pathname = pagePaths[id]
+    url.searchParams.delete('page')
+    url.searchParams.delete('section')
+    if (url.href !== window.location.href) window.history.pushState(null, '', url)
+    setTab(id); setNotice(''); window.scrollTo(0, 0) }
   const openRecipe = (recipe: Recipe, date?: string) => setModal({ kind: 'recipe', id: recipe.id, date })
   const close = () => { setError(''); setModal(undefined) }
   const openDay = (date: string) => setModal({ kind: 'day', date })
@@ -836,17 +906,20 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
       </>}
       {state && tab === 'boodschappen' && <Shopping unitSystem={unitSystem} state={state} save={save} busy={busy}/>}
       {state && tab === 'huisgenoten' && <>
-        <div className="page-heading"><div className="eyebrow"><Icon name="people" size={16}/> {state.household.name}</div><h1>Huisgenoten</h1><p>Beheer wie er mee-eet. Portiefactor 1 is één standaardportie.</p></div>
+        <div className="page-heading"><div className="eyebrow"><Icon name="people" size={16}/> {state.household.name}</div><h1>Huishouden</h1><p>Beheer wie er mee-eet. Portiefactor 1 is één standaardportie.</p></div>
         <section className="panel people-panel household-panel"><h2>Jouw huishouden</h2>
+          {account.role === 'owner' ? <form className="form-row household-name" onSubmit={event => {
+            event.preventDefault()
+            const data = new FormData(event.currentTarget)
+            void save({ type: 'renameHousehold', name: String(data.get('householdName')) })
+          }}><label>Naam huishouden<input key={state.household.name} name="householdName" defaultValue={state.household.name} required maxLength={80}/></label><button className="button" disabled={busy}>Groepsnaam opslaan</button></form> : <p>Alleen de eigenaar kan dit huishouden aanpassen.</p>}
           {state.people.map(person => <article className="housemate" key={person.id + person.name + person.factor}>
-            <div className="housemate-status"><strong>{person.name}</strong><small>{linkedPeople.has(person.id) ? 'Account gekoppeld' : 'Zonder account'}</small></div>
+            {state.ownerPeople?.includes(person.id) && <div className="housemate-owner">Eigenaar van het huishouden</div>}
             {account.role === 'owner' ? <>
               <PersonForm person={person} save={save} busy={busy} linked={linkedPeople.has(person.id)}/>
-              {!linkedPeople.has(person.id) && <button className="button text" onClick={() => setInviting(inviting === person.id ? undefined : person.id)}>
-                {inviting === person.id ? 'Uitnodiging sluiten' : 'Nodig ' + person.name + ' uit'}
-              </button>}
-              {inviting === person.id && !linkedPeople.has(person.id) && <InviteForm person={person}/>}
-            </> : <small>Portiefactor {person.factor.toLocaleString('nl-NL')}</small>}
+              <HousemateInvitation person={person} linked={linkedPeople.has(person.id)}/>
+
+            </> : <div><strong>{person.name}</strong><small> · Portiefactor {person.factor.toLocaleString('nl-NL')}</small></div>}
           </article>)}
           {!state.people.length && <p>Er zijn nog geen huisgenoten.</p>}
           {account.role === 'owner' && <><h3>Huisgenoot toevoegen</h3><PersonForm save={save} busy={busy}/></>}
