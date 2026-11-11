@@ -753,6 +753,8 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
   }
   const { drag, handlers } = useMealDrag((from, to) => void moveMeal(from, to, true))
   const current = today()
+  const todayMeal = state?.meals.find(meal => meal.date === current)
+  const todayRecipe = todayMeal && catalog[todayMeal.recipeId]
   const days = datesFrom(week, 7)
   const planned = state?.meals.filter(meal => days.includes(meal.date)).length ?? 0
   const navigate = (id: Tab) => { setTab(id); setNotice(''); window.scrollTo(0, 0) }
@@ -775,11 +777,11 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
       {state && tab === 'planning' && <>
         <section className="hero">
           <div className="hero-copy"><div className="eyebrow"><Icon name="leaf" size={16}/> Samen aan tafel</div>
-            <h1>Wat eten we<br/>deze week?</h1>
-            <p>Plan je avondeten, houd bij wie er mee-eet en neem je boodschappenlijst mee naar de winkel.</p>
-            <button className="button hero-button" onClick={() => navigate('boodschappen')}><Icon name="basket"/> Naar boodschappen <Icon name="arrow" size={17}/></button>
+            <h1>{todayRecipe ? todayRecipe.title : <>Wat eten we<br/>deze week?</>}</h1>
+            <p>{todayRecipe ? `Vanavond · ${todayRecipe.minutes} min · ${todayRecipe.cuisine}` : 'Plan je avondeten, houd bij wie er mee-eet en neem je boodschappenlijst mee naar de winkel.'}</p>
+            <button className="button hero-button" onClick={() => todayRecipe ? openRecipe(todayRecipe, current) : navigate('boodschappen')}><Icon name={todayRecipe ? 'book' : 'basket'}/> {todayRecipe ? 'Open recept' : 'Naar boodschappen'} <Icon name="arrow" size={17}/></button>
           </div>
-          <Plate theme="green" hero/>
+          {todayRecipe ? <div className="hero-recipe-photo"><RecipeArt recipe={todayRecipe}/></div> : <Plate theme="green" hero/>}
         </section>
         <section className="schedule" aria-labelledby="week-title">
           <div className="section-heading">

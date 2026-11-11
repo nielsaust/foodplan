@@ -670,3 +670,14 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .email-preview-tabs button[aria-selected="true"] { background: var(--paper); border-color: var(--line); color: var(--green); }
 .email-preview-frame iframe { display: block; margin: 0; border: 0; border-radius: 0; }
 .email-preview-frame pre { height: 700px; overflow: auto; padding: 24px; margin: 0; }
+
+.people-panel { max-width: none; width: 100%; }
+.transfer-section + .transfer-section { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--line); }
+.transfer-section > .button { margin-block: 10px; }
+.hero-recipe-photo { position: absolute; inset: 0 0 0 55%; }
+.hero:has(.hero-recipe-photo) .hero-copy { width: 100%; min-width: 0; max-width: none; padding-right: 24px; }
+.hero:has(.hero-recipe-photo) h1 { font-size: clamp(2rem, 4vw, 3.6rem); overflow-wrap: anywhere; }
+@media (max-width: 700px) {
+  .hero-recipe-photo { inset: 0; opacity: .18; }
+  .hero:has(.hero-recipe-photo) .hero-copy { max-width: 100%; }
+}

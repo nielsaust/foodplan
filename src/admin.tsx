@@ -44,6 +44,10 @@ export function AdminPage({ accountId, groupId, openRecipe, revision }: { revisi
     heading.current?.focus({ preventScroll: true })
     window.scrollTo(0, 0)
   }, [section])
+  const [accountSearch, setAccountSearch] = useState('')
+  const [accountFilter, setAccountFilter] = useState('')
+  const [accountOrder, setAccountOrder] = useState('name')
+  const [groupSearch, setGroupSearch] = useState('')
   const [catalog, setCatalog] = useState<Recipe[]>([])
   const [bundle, setBundle] = useState<{ recipes: Recipe[] }>()
   const [exportIds, setExportIds] = useState<string[]>([])
@@ -126,7 +130,8 @@ export function AdminPage({ accountId, groupId, openRecipe, revision }: { revisi
     <section className="panel people-panel" hidden={section !== "transfer"}>
 
       <p>Verplaats geselecteerde recepten met hun ingrediënten en kenmerken via een JSON-bestand. Bestaande recepten met hetzelfde ID worden overgeslagen.</p>
-      <h3>Exporteren</h3>
+      <section className="transfer-section"><h3>Exporteren</h3>
+      <button className="button" disabled={busy || !catalog.length} onClick={() => setExportIds(exportIds.length === catalog.length ? [] : catalog.map(item => item.id))}>{exportIds.length === catalog.length ? 'Alles deselecteren' : 'Alles selecteren'}</button>
       {catalog.map(recipe => <label className="check-row" key={recipe.id}>
         <input type="checkbox" checked={exportIds.includes(recipe.id)} onChange={() => setExportIds(toggle(exportIds, recipe.id))}/>{recipe.title}
       </label>)}
@@ -139,7 +144,7 @@ export function AdminPage({ accountId, groupId, openRecipe, revision }: { revisi
         link.click()
         setTimeout(() => URL.revokeObjectURL(url), 1000)
       })}>Download geselecteerde recepten</button>
-      <h3>Importeren</h3>
+      </section><section className="transfer-section"><h3>Importeren</h3>
       <label>Catalogusbestand<input type="file" accept=".json,application/json" disabled={busy} onChange={event => {
         const file = event.target.files?.[0]
         setBundle(undefined)
@@ -156,10 +161,11 @@ export function AdminPage({ accountId, groupId, openRecipe, revision }: { revisi
           setBundle(data)
         })
       }}/></label>
+      {bundle && <button className="button" disabled={busy} onClick={() => setImportIds(importIds.length === bundle.recipes.length ? [] : bundle.recipes.map(item => item.id))}>{importIds.length === bundle.recipes.length ? 'Alles deselecteren' : 'Alles selecteren'}</button>}
       {bundle?.recipes.map(recipe => <label className="check-row" key={recipe.id}>
         <input type="checkbox" checked={importIds.includes(recipe.id)} onChange={() => setImportIds(toggle(importIds, recipe.id))}/>{recipe.title}
       </label>)}
-      <button className="button primary" disabled={busy || !importIds.length} onClick={() => void change('catalog-import', { bundle, ids: importIds })}>Importeer geselecteerde recepten</button>
+      <button className="button primary" disabled={busy || !importIds.length} onClick={() => void change('catalog-import', { bundle, ids: importIds })}>Importeer geselecteerde recepten</button></section>
     </section>
       <section className="panel recipe-management" hidden={section !== "publications"}>
         <div className="form-row">
@@ -203,13 +209,25 @@ export function AdminPage({ accountId, groupId, openRecipe, revision }: { revisi
       </section>
       <section className="panel people-panel" hidden={section !== "accounts"}>
 
-        {overview?.accounts.map(item => <article className="admin-row" key={item.id}>
-          <strong>{item.name}{item.superuser ? ' · Superuser' : ''}</strong>
-          <p>{item.email} · {overview.groups.find(group => group.id === item.groupId)?.name} · {item.role === 'owner' ? 'Eigenaar' : 'Lid'} · {dateLabel(item.created)}</p>
+        <div className="form-row">
+          <label>Zoeken<input type="search" value={accountSearch} onChange={event => setAccountSearch(event.target.value)}/></label>
+          <label>Filter<select value={accountFilter} onChange={event => setAccountFilter(event.target.value)}>
+            <option value="">Alle accounts</option><option value="blocked">Geblokkeerd</option><option value="active">Actief</option><option value="superuser">Superusers</option><option value="owner">Eigenaren</option><option value="member">Leden</option>
+          </select></label>
+          <label>Sorteren op<select value={accountOrder} onChange={event => setAccountOrder(event.target.value)}>
+            <option value="name">Naam</option><option value="email">E-mailadres</option><option value="group">Groep</option><option value="created">Nieuwste eerst</option>
+          </select></label>
+        </div>
+        <div className="admin-table-scroll"><table className="admin-table"><thead><tr><th>Naam</th><th>E-mailadres</th><th>Groep</th><th>Rechten</th><th>Status</th><th>Aangemaakt</th><th>Acties</th></tr></thead><tbody>
+        {overview?.accounts.filter(item => nameKey(item.name + ' ' + item.email + ' ' + overview.groups.find(group => group.id === item.groupId)?.name).includes(nameKey(accountSearch)))
+          .filter(item => !accountFilter || (accountFilter === 'blocked' ? !!item.blocked : accountFilter === 'active' ? !item.blocked : accountFilter === 'superuser' ? !!item.superuser : item.role === accountFilter))
+          .sort((a, b) => accountOrder === 'created' ? (b.created ?? 0) - (a.created ?? 0) : (accountOrder === 'group' ? overview.groups.find(g => g.id === a.groupId)?.name ?? '' : a[accountOrder as 'name' | 'email']).localeCompare(accountOrder === 'group' ? overview.groups.find(g => g.id === b.groupId)?.name ?? '' : b[accountOrder as 'name' | 'email'], 'nl'))
+          .map(item => <tr key={item.id}><td>{item.name}</td><td>{item.email}</td><td>{overview.groups.find(group => group.id === item.groupId)?.name}</td><td>{item.superuser ? 'Superuser · ' : ''}{item.role === 'owner' ? 'Eigenaar' : 'Lid'}</td><td>{item.blocked ? 'Geblokkeerd' : 'Actief'}</td><td>{dateLabel(item.created)}</td><td><div className="form-row">
           <button className="button" disabled={busy || item.id === accountId} onClick={() => void change('admin-block', { kind: 'account', id: item.id, blocked: !item.blocked })}>{item.blocked ? 'Deblokkeren' : 'Blokkeren'}</button>
           {!!item.granted && item.id !== accountId && <button className="button danger" disabled={busy}
             onClick={() => void change('admin-revoke', { id: item.id })}>Beheerrechten intrekken</button>}
-        </article>)}
+        </div></td></tr>)}
+        </tbody></table></div>
         <h3>Superuser uitnodigen</h3>
         <form className="form-row" onSubmit={event => form(event, 'invite-superuser')}>
           <label>E-mailadres van bestaand account<input type="email" name="email" required maxLength={254}/></label>
@@ -218,7 +236,8 @@ export function AdminPage({ accountId, groupId, openRecipe, revision }: { revisi
       </section>
       <section className="panel people-panel" hidden={section !== "groups"}>
 
-        {overview?.groups.map(item => <article className="admin-row" key={item.id + item.name}>
+        <label>Groepen zoeken<input type="search" value={groupSearch} onChange={event => setGroupSearch(event.target.value)}/></label>
+        {overview?.groups.filter(item => nameKey(item.name).includes(nameKey(groupSearch))).map(item => <article className="admin-row" key={item.id + item.name}>
           <p>{item.members} gekoppelde accounts · {dateLabel(item.created)}</p>
           <form className="form-row" onSubmit={event => form(event, 'admin-rename', { id: item.id })}>
             <label>Groepsnaam<input name="name" defaultValue={item.name} required maxLength={80}/></label>
