@@ -131,7 +131,7 @@ export function RecipeEditor({ recipe, busy, publicTerms, privateTerms, onSave, 
     </div>
     <TermPicker label="Kenmerk zoeken of toevoegen" options={Object.values(tags).filter(tag => !isAllergyTag(tag.name))} maxLength={40}
       describe={tag => publicTerms.tags.some(item => item.id === tag.id) ? 'Publiek' : 'Privé'}
-      pick={selectTag} create={publicOnly ? undefined : name => {
+      pick={selectTag} create={name => {
         if (selectedTags.length >= 20 || publicTerms.tags.some(tag => isAllergyTag(tag.name) && nameKey(tag.name) === nameKey(name))) return
         const tag = { id: createTermId('tag'), name }
         setNewTags([...newTags, tag])
@@ -176,7 +176,7 @@ export function RecipeEditor({ recipe, busy, publicTerms, privateTerms, onSave, 
     </div>)}
     <TermPicker label="Ingrediënt zoeken of toevoegen" options={Object.values(ingredients)} maxLength={80}
       describe={ingredient => [ingredient.unit, publicTerms.ingredients.some(item => item.id === ingredient.id) ? 'Publiek' : 'Privé'].join(' · ')}
-      pick={addIngredient} create={publicOnly ? undefined : name => { setNewIngredient(name); setUnit('') }}/>
+      pick={addIngredient} create={name => { setNewIngredient(name); setUnit('') }}/>
     {newIngredient && <div className="form-row editor-add">
       <label>Eenheid voor {newIngredient}<select value={unit} onChange={event => setUnit(event.target.value)}>
         <option value="">Kies een eenheid</option>
@@ -186,7 +186,7 @@ export function RecipeEditor({ recipe, busy, publicTerms, privateTerms, onSave, 
         const ingredient = { id: createTermId('ingredient'), name: newIngredient, unit, group: 'Overige ingrediënten' }
         setNewIngredients([...newIngredients, ingredient])
         addIngredient(ingredient)
-      }}><Icon name="plus" size={16}/> Privé-ingrediënt toevoegen</button>
+      }}><Icon name="plus" size={16}/> {publicOnly ? 'Publiek ingrediënt toevoegen' : 'Privé-ingrediënt toevoegen'}</button>
       <button className="button text" type="button" onClick={() => { setNewIngredient(''); setUnit('') }}>Annuleren</button>
     </div>}
     <h3>Bereiding</h3>

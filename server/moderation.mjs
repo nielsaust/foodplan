@@ -104,7 +104,17 @@ export function createModeration(store) {
         }
       })
     },
-    editPublic(recipe) {
+    editPublic(recipe, additions = {}) {
+      return store.transaction(() => {
+      for (const [kind, entries] of [['ingredient', additions.ingredients ?? []], ['tag', additions.tags ?? []]]) {
+        if (!Array.isArray(entries) || entries.length > 200) throw new InputError('Ongeldige ingrediënten of kenmerken.')
+        for (const entry of entries) {
+          const term = validateTerm(entry, kind)
+          if (kind === 'ingredient' ? !Object.hasOwn(recipe.amounts ?? {}, term.id) : !recipe.tagIds?.includes(term.id)) throw new InputError('Een nieuwe term wordt niet gebruikt in het recept.')
+          if (db.prepare('SELECT 1 FROM public_terms WHERE id = ?').get(term.id)) throw new InputError('Deze term bestaat al. Kies de bestaande term.')
+          db.prepare('INSERT INTO public_terms VALUES (?, ?, ?)').run(term.id, kind, JSON.stringify(term))
+        }
+      }
       const terms = store.publicTerms()
       const ingredients = { ...ingredientById, ...Object.fromEntries(terms.ingredients.map(term => [term.id, term])) }
       const tags = Object.fromEntries([...baseTags, ...terms.tags].map(term => [term.id, term]))
@@ -118,7 +128,8 @@ export function createModeration(store) {
       if (!db.prepare("UPDATE recipe_publications SET recipe = ? WHERE id = ? AND status = 'approved'").run(data, id).changes) {
         throw new InputError('Dit recept is niet meer publiek.')
       }
-      return { recipe: JSON.parse(data) }
+      return { recipe: JSON.parse(data), terms: store.publicTerms() }
+      })
     },
     exportCatalog(ids) {
       if (!Array.isArray(ids) || !ids.length || ids.length > 500) throw new InputError('Selecteer publieke recepten.')

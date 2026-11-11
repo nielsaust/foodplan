@@ -1013,7 +1013,9 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
           setSavingPublic(true)
           setError('')
           try {
-            await authRequest('public-recipe-edit', { recipe })
+            await authRequest('public-recipe-edit', { recipe, terms })
+            const catalogResponse = await fetch('/api/catalog')
+            if (catalogResponse.ok) setPublishedTerms((await catalogResponse.json()).terms ?? emptyTerms)
             setPublicRecipes(current => current.map(item => item.id === recipe.id ? recipe : item))
             if (tab === 'beheer') setAdminRevision(value => value + 1)
             setModal({ kind: 'recipe', id: recipe.id, publicRecipe: recipe })

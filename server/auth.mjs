@@ -247,7 +247,7 @@ export function createAuth(store, mail = sendMail) {
         return { ...management(), publications: moderation.list(), terms: moderation.pendingTerms(), publicIngredients: store.publicTerms().ingredients }
       case 'public-recipe-edit':
         requireSuperuser(current)
-        return moderation.editPublic(body.recipe)
+        return moderation.editPublic(body.recipe, body.terms)
       case 'publication-review':
         requireSuperuser(current)
         return moderation.review(body.id)
