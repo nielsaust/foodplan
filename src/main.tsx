@@ -230,14 +230,11 @@ function RecipeDetail({ recipe, date, state, save, close, busy, edit, copy, publ
   const [publicationMessage, setPublicationMessage] = useState('')
   const [publishing, setPublishing] = useState(false)
   const [deletingPublic, setDeletingPublic] = useState(false)
+  const [planning, setPlanning] = useState(false)
+  const planningId = useId()
   const [scale, setScale] = useState(date ? portions(diners(state, date)) : 1)
   const [cooking, setCooking] = useState(false)
   const planningDays = datesFrom(today(), 7)
-  const [target, setTarget] = useState(date && planningDays.includes(date) ? date : planningDays[0])
-  const [confirmedRecipe, setConfirmedRecipe] = useState<string>()
-  const existing = state.meals.find(meal => meal.date === target)
-  const replaces = existing && existing.recipeId !== recipe.id
-  const confirm = replaces && existing.recipeId === confirmedRecipe
   const describe = (id: string, fraction = 1) => {
     const item = ingredients[id]
     return ingredientAmount(recipe.amounts[id] * scale, item.unit, unitSystem, fraction) + ' ' + item.name.toLocaleLowerCase('nl')
@@ -247,31 +244,48 @@ function RecipeDetail({ recipe, date, state, save, close, busy, edit, copy, publ
     const [id, factor] = part.slice(1, -1).split(':')
     return <strong key={index}>{describe(id, factor ? Number(factor) : 1)}</strong>
   }))
-  async function plan(event: FormEvent) {
-    event.preventDefault()
-    if (replaces && !confirm) { setConfirmedRecipe(existing.recipeId); return }
-    if (await save({ type: 'meal', date: target, recipeId: recipe.id })) close()
+  async function plan(day: string) {
+    const existing = state.meals.find(meal => meal.date === day)
+    if (existing && existing.recipeId !== recipe.id &&
+      !window.confirm('Op ' + formatLong(day) + ' staat al ' + (existing.text ?? householdRecipes(state)[existing.recipeId]?.title ?? 'een maaltijd') + '. Deze maaltijd vervangen?')) return
+    if (await save({ type: 'meal', date: day, recipeId: recipe.id })) close()
   }
   return <>
     <div className="detail-art"><RecipeArt recipe={recipe}/></div>
-    {(edit || remove || copy || publicRemove) && <div className="detail-tools">{edit && <button className="button" onClick={edit}><Icon name="edit" size={16}/> Recept aanpassen</button>}
+    {(edit || remove || copy || canPlan) && <div className="detail-tools">{edit && !publicRemove && <button className="button" onClick={edit}><Icon name="edit" size={16}/> Recept aanpassen</button>}
     {remove && <button className="button danger" disabled={busy} onClick={() => {
       if (window.confirm('Recept verwijderen? Het verdwijnt ook uit de weekplanning. De ingrediënten blijven bewaard.')) void remove()
     }}>Recept verwijderen</button>}
-      {publicRemove && <button className="button danger" disabled={busy} onClick={() => setDeletingPublic(value => !value)}>Publiek recept verwijderen</button>}
       {copy && <button className="button" disabled={busy} onClick={copy}><Icon name="copy" size={16}/> Bewaar als privérecept</button>}
+      {canPlan && <div className="recipe-plan-picker"
+        onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setPlanning(false) }}
+        onKeyDown={event => {
+          if (event.key === 'Escape' && planning) {
+            event.stopPropagation()
+            setPlanning(false)
+            event.currentTarget.querySelector('button')?.focus()
+          }
+          if (event.key === 'ArrowDown' && event.target === event.currentTarget.querySelector('button')) {
+            event.preventDefault()
+            setPlanning(true)
+            const picker = event.currentTarget
+            requestAnimationFrame(() => picker.querySelector<HTMLButtonElement>('.recipe-plan-days button')?.focus())
+          }
+        }}>
+        <button className="button primary" aria-expanded={planning} aria-controls={planningId}
+          onClick={() => setPlanning(value => !value)}>Plan dit recept <Icon name="calendar" size={17}/></button>
+        {planning && <div id={planningId} className="recipe-plan-days" aria-label="Kies een dag">
+          {planningDays.map(day => {
+            const meal = state.meals.find(item => item.date === day)
+            return <button key={day} disabled={busy} onClick={() => void plan(day)}>
+              <strong>{formatLong(day)}</strong>
+              {meal && <small>{meal.text ?? householdRecipes(state)[meal.recipeId]?.title}</small>}
+            </button>
+          })}
+        </div>}
+      </div>}
     </div>}
     {archived && <p className="alert">Dit recept is verborgen. Bewaar het als privérecept om het opnieuw in te plannen.</p>}
-    {deletingPublic && publicRemove && <section className="alert">
-      <p>Verbergen houdt geplande maaltijden beschikbaar. Definitief verwijderen haalt het recept ook uit de weekplanningen.</p>
-      <div className="form-row">
-        <button className="button" disabled={busy || archived} onClick={() => void publicRemove('archived')}>Verbergen</button>
-        <button className="button danger" disabled={busy} onClick={() => {
-          if (window.confirm('Dit publieke recept definitief verwijderen, ook uit weekplanningen?')) void publicRemove('deleted')
-        }}>Definitief verwijderen</button>
-        <button className="button" onClick={() => setDeletingPublic(false)}>Annuleren</button>
-      </div>
-    </section>}
     <p className="recipe-meta"><Icon name="clock" size={16}/> {recipe.minutes} min <span>·</span> {recipe.cuisine}</p>
     <Nutrition recipe={recipe}/>
     <p>{recipe.description}</p>
@@ -298,13 +312,7 @@ function RecipeDetail({ recipe, date, state, save, close, busy, edit, copy, publ
     </div>
     <ol className="steps">{steps.map((step, index) => <li key={index}>{step}</li>)}</ol>
     {cooking && <CookingMode title={recipe.title} steps={steps} close={() => setCooking(false)}/>}
-    {canPlan && <form className="form-row dialog-footer recipe-plan" onSubmit={plan}>
-      <label>Inplannen op<select value={target} onChange={event => { setTarget(event.target.value); setConfirmedRecipe(undefined) }}>
-        {planningDays.map(day => <option key={day} value={day}>{formatLong(day)}</option>)}
-      </select></label>
-      <button className="button primary" disabled={busy}>{confirm ? 'Maaltijd vervangen' : 'Plan dit recept'} <Icon name="calendar" size={17}/></button>
-      {confirm && <small className="full-width">Op die dag staat al {householdRecipes(state)[existing.recipeId].title}.</small>}
-    </form>}
+
     {publish && <div className="dialog-footer">
       <button className="button" disabled={publishing || !!publicationMessage} onClick={async () => {
         setPublishing(true)
@@ -317,6 +325,25 @@ function RecipeDetail({ recipe, date, state, save, close, busy, edit, copy, publ
       }}>Indienen voor publicatie</button>
       {publicationMessage && <p role="status">{publicationMessage}</p>}
     </div>}
+    {publicRemove && <footer className="recipe-admin-footer">
+      <small>Beheer · Alleen zichtbaar voor superusers</small>
+      <div className="form-row">
+        {edit && <button className="admin-text-link" onClick={edit}>Recept aanpassen</button>}
+        <button className="admin-text-link danger" disabled={busy}
+          onClick={() => setDeletingPublic(value => !value)}>Recept verwijderen</button>
+      </div>
+    {deletingPublic && publicRemove && <section className="alert">
+      <p>Verbergen houdt geplande maaltijden beschikbaar. Definitief verwijderen haalt het recept ook uit de weekplanningen.</p>
+      <div className="form-row">
+        <button className="button" disabled={busy || archived} onClick={() => void publicRemove('archived')}>Verbergen</button>
+        <button className="button danger" disabled={busy} onClick={() => {
+          if (window.confirm('Dit publieke recept definitief verwijderen, ook uit weekplanningen?')) void publicRemove('deleted')
+        }}>Definitief verwijderen</button>
+        <button className="button" onClick={() => setDeletingPublic(false)}>Annuleren</button>
+      </div>
+    </section>}
+    </footer>}
+
   </>
 }
 
@@ -346,11 +373,11 @@ function filterRecipes(recipes: Recipe[], search: string, selected: string[]) {
   return { tagOptions, active, visible, matchingTags }
 }
 
-function RecipeFilters({ tagOptions, active, setSelected, count, close, reset }: {
-  tagOptions: string[]; active: string[]; setSelected: (tags: string[]) => void; count: number; close: () => void; reset?: () => void
+function RecipeFilters({ tagOptions, active, setSelected, count, close, reset, collection }: {
+  tagOptions: string[]; active: string[]; setSelected: (tags: string[]) => void; count: number; close: () => void; reset?: () => void; collection?: ReactNode
 }) {
   return <Dialog title="Filter op kenmerken en allergie-informatie" close={close}>
-      <p>Toon recepten die aan alle geselecteerde kenmerken voldoen.</p>
+      {collection}
       {[false, true].map(allergy => <fieldset className={allergy ? "allergy-fieldset" : undefined} key={String(allergy)}>
         <legend>{allergy ? 'Allergie-informatie' : 'Kenmerken'}</legend>
         <div className="filter-options">{tagOptions.filter(tag => isAllergyTag(tag) === allergy).map(tag => <label className="check-row" key={tag}>
@@ -362,7 +389,7 @@ function RecipeFilters({ tagOptions, active, setSelected, count, close, reset }:
     </Dialog>
 }
 
-function RecipeGrid({ recipes, onOpen, disabled, onAdd }: { onAdd?: () => void; recipes: Recipe[]; onOpen: (recipe: Recipe) => void; disabled?: boolean }) {
+function RecipeGrid({ recipes, onOpen, disabled, onAdd, collectionBadge }: { collectionBadge?: (id: string) => ReactNode; onAdd?: () => void; recipes: Recipe[]; onOpen: (recipe: Recipe) => void; disabled?: boolean }) {
   return <>
     <div className="recipe-grid">
       {onAdd && <button type="button" className="recipe-card add-recipe-card" onClick={onAdd}>
@@ -370,7 +397,7 @@ function RecipeGrid({ recipes, onOpen, disabled, onAdd }: { onAdd?: () => void; 
         <div className="recipe-body"><h3>Recept toevoegen</h3><p>Maak een nieuw recept voor je privécollectie.</p></div>
       </button>}
       {recipes.map(recipe => <button key={recipe.id} className="recipe-card" disabled={disabled} onClick={() => onOpen(recipe)}>
-        <div className="recipe-art"><RecipeArt recipe={recipe}/><span className="time-pill"><Icon name="clock" size={14}/>{recipe.minutes} min</span></div>
+        <div className="recipe-art"><RecipeArt recipe={recipe}/><span className="time-pill"><Icon name="clock" size={14}/>{recipe.minutes} min {collectionBadge?.(recipe.id)}</span></div>
         <div className="recipe-body"><small>{recipe.cuisine}</small><h3>{recipe.title}</h3><p>{recipe.subtitle}</p><Nutrition recipe={recipe}/><div className="tags"><>{[...recipe.tags.filter(isAllergyTag), ...recipe.tags.filter(tag => !isAllergyTag(tag)).slice(0, 2)].map(tag => <span className={isAllergyTag(tag) ? "allergy-tag" : undefined} key={tag}>{tag}</span>)}</><Icon name="arrow" size={18}/></div></div>
       </button>)}
     </div>
@@ -378,24 +405,73 @@ function RecipeGrid({ recipes, onOpen, disabled, onAdd }: { onAdd?: () => void; 
   </>
 }
 
-function MealRecipePicker({ recipes, current, busy, choose }: {
-  recipes: Recipe[]; current?: Recipe; busy: boolean; choose: (id: string | null) => void
+function DayMealPicker({ date, state, recipes, busy, save }: {
+  date: string; state: State; recipes: Recipe[]; busy: boolean; save: (action: Action) => Promise<boolean>
 }) {
+  const meal = state.meals.find(item => item.date === date)
+  const currentRecipe = meal ? householdRecipes(state)[meal.recipeId] : undefined
+  const [editing, setEditing] = useState(!meal)
+  const [mode, setMode] = useState(meal?.text ? 'text' : 'recipe')
+  const [text, setText] = useState(meal?.text ?? '')
+  async function choose(recipeId: string | null, text?: string) {
+    if (await save({ type: 'meal', date, recipeId, ...(text === undefined ? {} : { text }) })) setEditing(recipeId === null && text === undefined)
+  }
+  return <section className="day-dinner">
+    <h3>Avondeten</h3>
+    <div className="day-planned">
+      {currentRecipe && <div className="day-planned-photo"><RecipeArt recipe={currentRecipe}/></div>}
+      <div>
+        <small>{meal ? 'Gepland' : 'Nog niets gepland'}</small>
+        <strong>{meal?.text ?? currentRecipe?.title ?? 'Wat eten we deze dag?'}</strong>
+        {currentRecipe && <small>{currentRecipe.minutes} min · {currentRecipe.cuisine}</small>}
+      </div>
+      {meal && <div className="day-planned-actions">
+        <button className="button" disabled={busy} aria-expanded={editing} onClick={() => {
+          setText(meal.text ?? '')
+          setEditing(value => !value)
+        }}>{editing ? 'Sluiten' : 'Wijzigen'}</button>
+        <button className="icon-button" disabled={busy} aria-label="Planning verwijderen" title="Planning verwijderen" onClick={() => void choose(null)}><Icon name="close"/></button>
+      </div>}
+    </div>
+    {(editing || !meal) && <div className="day-meal-editor">
+      <div className="day-meal-modes" role="group" aria-label="Soort avondplanning">
+        <button className={'button' + (mode === 'recipe' ? ' primary' : '')} aria-pressed={mode === 'recipe'} onClick={() => setMode('recipe')}>Recept kiezen</button>
+        <button className={'button' + (mode === 'text' ? ' primary' : '')} aria-pressed={mode === 'text'} onClick={() => setMode('text')}>Zelf invullen</button>
+      </div>
+      {mode === 'recipe' ? <MealRecipePicker privateIds={Object.keys(state.recipeEdits ?? {})} recipes={recipes} busy={busy} choose={recipeId => void choose(recipeId)}/>
+        : <form className="day-text-form" onSubmit={event => {
+          event.preventDefault()
+          void choose(null, text)
+        }}>
+          <label>Wat staat er gepland?
+            <input required maxLength={160} value={text} disabled={busy} placeholder="Bijv. uit eten of eten bestellen" onChange={event => setText(event.target.value)}/>
+          </label>
+          <button className="button primary" disabled={busy || !text.trim()}>Planning opslaan</button>
+        </form>}
+    </div>}
+  </section>
+}
+
+function MealRecipePicker({ recipes, privateIds, busy, choose }: {
+  recipes: Recipe[]; privateIds: string[]; busy: boolean; choose: (id: string | null) => void
+}) {
+  const [scope, setScope] = useState('all')
   const [search, setSearch] = useState('')
   const [expanded, setExpanded] = useState(false)
   const [selected, setSelected] = useState<string[]>([])
   const [filterOpen, setFilterOpen] = useState(false)
-  const { tagOptions, active, visible, matchingTags } = filterRecipes(recipes, search, selected)
+  const scopedRecipes = recipes.filter(recipe => scope === 'all' || (scope === 'private') === privateIds.includes(recipe.id))
+  const { tagOptions, active, visible, matchingTags } = filterRecipes(scopedRecipes, search, selected)
+  const collectionBadge = (id: string) => <span className="recipe-collection" title={privateIds.includes(id) ? 'Privérecept' : 'Publiek recept'}>
+    <Icon name={privateIds.includes(id) ? 'lock' : 'globe'} size={15}/>
+    <span className="sr-only">{privateIds.includes(id) ? 'Privé' : 'Publiek'}</span>
+  </span>
   return <>
-    <div className="meal-current">
-      <strong>{current?.title ?? 'Geen maaltijd gepland'}</strong>
-      {current && <button type="button" className="button text" disabled={busy} onClick={() => choose(null)}>Maaltijd verwijderen</button>}
-    </div>
     <div className="filters meal-picker">
       <TermPicker label="Zoek op receptnaam" options={matchingTags.map(recipe => ({ ...recipe, name: recipe.title }))}
         maxLength={120} search={search} onSearch={setSearch} expanded={expanded} disabled={busy}
-        describe={recipe => recipe.minutes + ' min'} pick={recipe => choose(recipe.id)}
-        thumbnail={recipe => recipe.image && <img src={recipe.image} alt="" className="recipe-thumb"/>}/>
+        describe={recipe => <span className="recipe-result-meta">{recipe.minutes} min {collectionBadge(recipe.id)}</span>} pick={recipe => choose(recipe.id)}
+        thumbnail={recipe => <span className="recipe-thumb"><RecipeArt recipe={recipe}/></span>}/>
       <button type="button" className={'icon-button filter-button' + (active.length ? ' filter-active' : '')}
         aria-label={active.length ? 'Filter op kenmerken, ' + active.length + ' actief' : 'Filter op kenmerken'}
         onClick={() => setFilterOpen(true)}>
@@ -405,8 +481,16 @@ function MealRecipePicker({ recipes, current, busy, choose }: {
     <button type="button" className="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
       {expanded ? 'Resultaten inklappen' : 'Alle zoekresultaten tonen'} ({visible.length})
     </button>
-    {expanded && <div className="meal-results"><RecipeGrid recipes={visible} disabled={busy} onOpen={recipe => choose(recipe.id)}/></div>}
-    {filterOpen && <RecipeFilters {...{ tagOptions, active, setSelected }} count={visible.length} close={() => setFilterOpen(false)}/>}
+    {expanded && <div className="meal-results"><RecipeGrid collectionBadge={collectionBadge} recipes={visible} disabled={busy} onOpen={recipe => choose(recipe.id)}/></div>}
+    {filterOpen && <RecipeFilters {...{ tagOptions, active, setSelected }} count={visible.length} close={() => setFilterOpen(false)} collection={
+      <label className="collection-filter">Collectie
+        <select value={scope} onChange={event => setScope(event.target.value)}>
+          <option value="all">Alle recepten</option>
+          <option value="public">Publiek</option>
+          <option value="private">Privé van je groep</option>
+        </select>
+      </label>
+    }/>}
   </>
 }
 
@@ -641,9 +725,10 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
   }, [tab, modal?.kind === 'edit', setError])
   const dayMeal = modal?.kind === 'day' ? state?.meals.find(meal => meal.date === modal.date) : undefined
   async function moveMeal(from: string, to: string, insert = false) {
-    const recipeId = state?.meals.find(meal => meal.date === from)?.recipeId
-    if (!recipeId) return
-    if (await save({ type: 'moveMeal', from, to, recipeId, insert })) {
+    const meal = state?.meals.find(meal => meal.date === from)
+    if (!meal) return
+    const { recipeId, text } = meal
+    if (await save({ type: 'moveMeal', from, to, recipeId, text, insert })) {
       setWeek(weekStart(to))
       setNotice('Maaltijd verplaatst naar ' + formatLong(to) + '.')
       close()
@@ -692,13 +777,14 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
             const meal = state.meals.find(item => item.date === date)
             const recipe = meal && catalog[meal.recipeId]
             const guests = diners(state, date)
-            const draggable = !busy && !!recipe && canScheduleRecipe(state, recipe.id)
+            const draggable = !busy && !!meal && (!!meal.text || (!!recipe && canScheduleRecipe(state, recipe.id)))
             const dropClass = drag?.from === date ? ' drag-source' : drag?.to === date ? ' drop-before'
               : date === days[6] && drag?.to === addDays(date, 1) ? ' drop-after' : ''
             return <div className={'day-row ' + (date === current ? 'is-today' : '') + dropClass + (draggable ? ' draggable-meal' : '')} data-meal-date={date}
               data-occupied={meal ? 'true' : undefined} data-after={addDays(date, 1)} {...(draggable ? handlers(date) : {})} key={date} aria-current={date === current ? 'date' : undefined}>
               <div className="day-date"><span>{formatDate(date, { weekday: 'short' }).replace('.', '')}</span><strong>{formatDate(date, { day: 'numeric' })}</strong></div>
               {recipe ? <button className="meal-title" disabled={busy} onClick={() => openRecipe(recipe, date)}><span><strong>{recipe.title}</strong><small>{recipe.minutes} min · {recipe.cuisine}</small></span></button>
+                : meal?.text ? <button className="meal-title" disabled={busy} onClick={() => openDay(date)}><strong>{meal.text}</strong></button>
                 : <button className="add-meal" onClick={() => openDay(date)}><Icon name="plus" size={17}/> Maaltijd plannen</button>}
               {date === current && <span className="today-pill">Vandaag</span>}
               <button className="guests" onClick={() => openDay(date)} aria-label={'Mee-eters op ' + formatLong(date)}><Icon name="people" size={17}/><span>{guests.length} <span className="guest-label">mee</span></span></button>
@@ -772,7 +858,7 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
     </footer>
     {profileOpen && state && <Profile diet={diet} setDiet={setDiet} unitSystem={unitSystem} setUnitSystem={setUnitSystem} account={account} person={state.people.find(person => person.id === account.personId)} close={() => setProfileOpen(false)}/>}
     {settingsOpen && <Settings busy={busy} error={error} restore={restore} clearDatabase={() => save({ type: 'clearDatabase' })} close={() => { setError(''); setSettingsOpen(false) }}/>}
-    {state && modal && <Dialog key={modal.kind} printable={modal.kind === "recipe"} fullscreen={modal.kind === "edit"} title={modal.kind === 'recipe' ? selectedRecipe?.title ?? 'Recept' : modal.kind === 'edit' ? (modal.isNew ? 'Recept toevoegen' : 'Recept aanpassen') : formatLong(modal.date)} close={close}>
+    {state && modal && <Dialog key={modal.kind} printable={modal.kind === "recipe"} fullscreen={modal.kind === "edit" || modal.kind === "day"} title={modal.kind === 'recipe' ? selectedRecipe?.title ?? 'Recept' : modal.kind === 'edit' ? (modal.isNew ? 'Recept toevoegen' : 'Recept aanpassen') : formatLong(modal.date)} close={close}>
       {error && <p className="alert" role="alert">{error}</p>}
       {modal.kind === 'recipe' && selectedRecipe && <RecipeDetail key={selectedRecipe.id} recipe={selectedRecipe} unitSystem={unitSystem} ingredients={modal.reviewIngredients ?? (modal.publicRecipe ? Object.fromEntries(publicTerms.ingredients.map(item => [item.id, item])) : householdIngredients(state))}
         archived={archived} canPlan={isPrivate || isPublished} date={modal.date} state={state} save={save} close={close} busy={busy || savingPublic}
@@ -819,19 +905,18 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
         }
         if (await save({ type: 'saveRecipe', recipe, terms })) openRecipe(recipe, modal.date)
       }}/>}
-      {modal.kind === 'day' && <>
-        <h3>Mee-eters</h3>
-        <p>Iedereen eet standaard mee. Vink uit wie er die dag niet is.</p>
+      {modal.kind === 'day' && <div className="day-editor">
+        <section className="day-attendance"><h3>Mee-eters</h3>
+        <p>Vink aan wie er mee-eet.</p>
         <div className="attendance">{state.people.map(person => <label key={person.id} className="check-row">
           <input type="checkbox" checked={diners(state, modal.date).some(item => item.id === person.id)} disabled={busy}
             onChange={event => void save({ type: 'attendance', date: modal.date, id: person.id, present: event.target.checked })}/>
           <span>{person.name}</span><strong>{amount(person.factor, 'portie')}</strong>
         </label>)}</div>
         {!state.people.length && <button className="button" onClick={() => { close(); navigate('huisgenoten') }}>Huisgenoot toevoegen</button>}
-        <h3>Avondeten</h3>
-        <MealRecipePicker key={modal.date} recipes={recipes} current={dayMeal ? catalog[dayMeal.recipeId] : undefined} busy={busy}
-          choose={recipeId => void save({ type: 'meal', date: modal.date, recipeId })}/>
-        {dayMeal && canScheduleRecipe(state, dayMeal.recipeId) && <form className="form-row dialog-footer" onSubmit={event => {
+        </section>
+        <DayMealPicker key={modal.date} date={modal.date} state={state} recipes={recipes} busy={busy} save={save}/>
+        {dayMeal && (dayMeal.text || canScheduleRecipe(state, dayMeal.recipeId)) && <details className="day-move"><summary>Planning verplaatsen</summary><form className="form-row" onSubmit={event => {
           event.preventDefault()
           const destination = String(new FormData(event.currentTarget).get('destination') || '')
           if (destination === modal.date) setError('Kies een andere dag.')
@@ -839,9 +924,9 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
         }}>
           <label>Verplaatsen naar<input type="date" name="destination" required/></label>
           <button className="button" disabled={busy}>Maaltijd verplaatsen</button>
-        </form>}
-        <div className="dialog-footer"><button className="button primary" onClick={close}>Klaar <Icon name="check" size={17}/></button></div>
-      </>}
+        </form></details>}
+        <div className="day-done"><button className="button primary" onClick={close}>Klaar <Icon name="check" size={17}/></button></div>
+      </div>}
     </Dialog>}
   </>
 }

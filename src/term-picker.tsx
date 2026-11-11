@@ -5,7 +5,7 @@ import { nameKey } from '../domain/terms'
 export function TermPicker<T extends { id: string; name: string }>({ label, options, describe, pick, create, maxLength, search, onSearch, expanded = false, disabled = false, thumbnail }: {
   label: string
   options: T[]
-  describe: (option: T) => string
+  describe: (option: T) => ReactNode
   pick: (option: T) => void
   search?: string
   onSearch?: (query: string) => void

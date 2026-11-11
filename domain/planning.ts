@@ -5,7 +5,7 @@ import { convertQuantity } from './units.ts'
 import type { UnitSystem } from './units.ts'
 
 export type Person = { id: string; name: string; factor: number }
-export type Meal = { date: string; recipeId: string }
+export type Meal = { date: string; recipeId: string; text?: string }
 export type Extra = { id: string; name: string; checked: boolean }
 export type State = {
   household: { id: string; name: string }
@@ -36,10 +36,10 @@ export type Action =
   | { type: 'copyPublicRecipe'; id: string; copyId: string }
   | { type: 'deleteRecipe'; id: string }
   | { type: 'saveRecipe'; recipe: Recipe; terms?: Terms }
-  | { type: 'moveMeal'; from: string; to: string; recipeId: string; insert?: boolean }
+  | { type: 'moveMeal'; from: string; to: string; recipeId: string; text?: string; insert?: boolean }
   | { type: 'person'; id: string; name: string; factor: number }
   | { type: 'removePerson'; id: string }
-  | { type: 'meal'; date: string; recipeId: string | null }
+  | { type: 'meal'; date: string; recipeId: string | null; text?: string }
   | { type: 'copyWeek'; from: string }
   | { type: 'attendance'; date: string; id: string; present: boolean }
   | { type: 'checkAll'; start: string; days: number; checked?: boolean }

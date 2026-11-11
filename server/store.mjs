@@ -159,7 +159,7 @@ function importState(backup, publicRecipes) {
   }
   const catalog = householdRecipes({ recipeEdits, includeStarterRecipes, publicRecipes })
   requireInput(Array.isArray(meals) && meals.every(meal =>
-    record(meal) && dateOk(meal.date) && idOk(meal.recipeId) && Object.hasOwn(catalog, meal.recipeId)
+    record(meal) && dateOk(meal.date) && (meal.recipeId === '' ? nameOk(meal.text, 160) : idOk(meal.recipeId) && Object.hasOwn(catalog, meal.recipeId) && meal.text === undefined)
   ) && unique(meals, meal => meal.date))
   requireInput(record(attendance) && Object.entries(attendance).every(([date, ids]) =>
     dateOk(date) && Array.isArray(ids) && ids.every(id => peopleIds.has(id))
@@ -224,13 +224,13 @@ function apply(state, action, publicTerms = emptyTerms) {
       break
     }
     case 'moveMeal': {
-      requireInput(dateOk(action.from) && dateOk(action.to) && action.from !== action.to && idOk(action.recipeId))
+      requireInput(dateOk(action.from) && dateOk(action.to) && action.from !== action.to && (idOk(action.recipeId) || (action.recipeId === '' && nameOk(action.text, 160))))
       const meal = state.meals.find(item => item.date === action.from)
       const destination = state.meals.find(item => item.date === action.to)
-      if (!meal && destination?.recipeId === action.recipeId) break
-      if (meal?.recipeId !== action.recipeId) throw new InputError('De maaltijd op de oorspronkelijke dag is veranderd.')
+      if (!meal && destination?.recipeId === action.recipeId && destination?.text === action.text) break
+      if (!meal || meal.recipeId !== action.recipeId || meal.text !== action.text) throw new InputError('De maaltijd op de oorspronkelijke dag is veranderd.')
       if (destination && !action.insert) throw new InputError('Op die dag staat al een maaltijd. Kies een vrije dag.')
-      if (!canScheduleRecipe(state, meal.recipeId)) throw new InputError('Dit recept is verborgen. Bewaar het als privérecept om het opnieuw in te plannen.')
+      if (!meal.text && !canScheduleRecipe(state, meal.recipeId)) throw new InputError('Dit recept is verborgen. Bewaar het als privérecept om het opnieuw in te plannen.')
       if (action.insert) {
         const occupied = new Map(state.meals.filter(item => item !== meal).map(item => [item.date, item]))
         let date = action.to
@@ -247,14 +247,15 @@ function apply(state, action, publicTerms = emptyTerms) {
       break
     }
     case 'meal':
-      requireInput(dateOk(action.date) && (action.recipeId === null || (idOk(action.recipeId) && canScheduleRecipe(state, action.recipeId))))
+      requireInput(dateOk(action.date) && (action.text !== undefined ? nameOk(action.text, 160) && action.recipeId === null : action.recipeId === null || (idOk(action.recipeId) && canScheduleRecipe(state, action.recipeId))))
       state.meals = state.meals.filter(item => item.date !== action.date)
-      if (action.recipeId) state.meals.push({ date: action.date, recipeId: action.recipeId })
+      if (action.text !== undefined) state.meals.push({ date: action.date, recipeId: '', text: action.text.trim() })
+      else if (action.recipeId) state.meals.push({ date: action.date, recipeId: action.recipeId })
       break
     case 'copyWeek': {
       requireInput(dateOk(action.from) && weekStart(action.from) === action.from)
       const dates = new Set(datesFrom(action.from, 7))
-      for (const meal of state.meals.filter(item => dates.has(item.date) && canScheduleRecipe(state, item.recipeId))) {
+      for (const meal of state.meals.filter(item => dates.has(item.date) && (item.text || canScheduleRecipe(state, item.recipeId)))) {
         const date = addDays(meal.date, 7)
         if (!state.meals.some(item => item.date === date)) state.meals.push({ ...meal, date })
       }
