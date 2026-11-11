@@ -1,3 +1,4 @@
+import { FileUpload } from './file-upload'
 import { pagePaths } from '../domain/navigation'
 import { Icon } from './visuals'
 import { nameKey, publicBaseTerms } from '../domain/terms'
@@ -62,7 +63,11 @@ export function AdminPage({ accountId, groupId, openRecipe, revision }: { revisi
   const [accountSearch, setAccountSearch] = useState('')
   const [accountFilter, setAccountFilter] = useState('')
   const [accountOrder, setAccountOrder] = useState('name')
+  const [accountDescending, setAccountDescending] = useState(false)
+  const [inviteOpen, setInviteOpen] = useState(false)
   const [groupSearch, setGroupSearch] = useState('')
+  const [transferTab, setTransferTab] = useState<'export' | 'import'>('export')
+  const transferId = useId()
   const [catalog, setCatalog] = useState<Recipe[]>([])
   const [bundle, setBundle] = useState<{ recipes: Recipe[] }>()
   const [exportIds, setExportIds] = useState<string[]>([])
@@ -126,10 +131,10 @@ export function AdminPage({ accountId, groupId, openRecipe, revision }: { revisi
   }
   return <>
     {section && <button className="button admin-back" disabled={busy} onClick={() => navigate()}>← Terug naar dashboard</button>}
-    <div className="page-heading">
+    <div className={'page-heading' + (section === 'accounts' ? ' accounts-heading' : '')}>
       <div className="eyebrow">Superuser{section && ' · Beheer'}</div>
       <h1 ref={heading} tabIndex={-1}>{section ? sections[section].title : 'Beheer'}</h1>
-      <p>{section ? sections[section].description : 'Beheer accounts, groepen en de openbare receptencatalogus.'}</p>
+      {section !== 'accounts' && <p>{section ? sections[section].description : 'Beheer accounts, groepen en de openbare receptencatalogus.'}</p>}
     </div>
     {error && <p className="alert" role="alert">{error}</p>}
     {message && <p role="status">{message}</p>}
@@ -145,7 +150,17 @@ export function AdminPage({ accountId, groupId, openRecipe, revision }: { revisi
     <section className="panel people-panel" hidden={section !== "transfer"}>
 
       <p>Verplaats geselecteerde recepten met hun ingrediënten en kenmerken via een JSON-bestand. Bestaande recepten met hetzelfde ID worden overgeslagen.</p>
-      <section className="transfer-section"><h3>Exporteren</h3>
+      <div className="transfer-tabs" role="tablist" aria-label="Recepten overzetten">
+        {(['export', 'import'] as const).map(tab => <button key={tab} type="button" className={'button' + (transferTab === tab ? ' primary' : '')} role="tab" id={transferId + tab} aria-controls={transferId + tab + '-panel'} aria-selected={transferTab === tab} tabIndex={transferTab === tab ? 0 : -1} onClick={() => setTransferTab(tab)} onKeyDown={event => {
+          if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+            event.preventDefault()
+            const next = event.key === 'Home' ? 'export' : event.key === 'End' ? 'import' : transferTab === 'export' ? 'import' : 'export'
+            setTransferTab(next)
+            document.getElementById(transferId + next)?.focus()
+          }
+        }}>{tab === 'export' ? 'Exporteren' : 'Importeren'}</button>)}
+      </div>
+      <section className="transfer-section" role="tabpanel" id={transferId + 'export-panel'} aria-labelledby={transferId + 'export'} hidden={transferTab !== 'export'}>
       <button className="button" disabled={busy || !catalog.length} onClick={() => setExportIds(exportIds.length === catalog.length ? [] : catalog.map(item => item.id))}>{exportIds.length === catalog.length ? 'Alles deselecteren' : 'Alles selecteren'}</button>
       {catalog.map(recipe => <label className="check-row" key={recipe.id}>
         <input type="checkbox" checked={exportIds.includes(recipe.id)} onChange={() => setExportIds(toggle(exportIds, recipe.id))}/>{recipe.title}
@@ -159,8 +174,8 @@ export function AdminPage({ accountId, groupId, openRecipe, revision }: { revisi
         link.click()
         setTimeout(() => URL.revokeObjectURL(url), 1000)
       })}>Download geselecteerde recepten</button>
-      </section><section className="transfer-section"><h3>Importeren</h3>
-      <label>Catalogusbestand<input type="file" accept=".json,application/json" disabled={busy} onChange={event => {
+      </section><section className="transfer-section" role="tabpanel" id={transferId + 'import-panel'} aria-labelledby={transferId + 'import'} hidden={transferTab !== 'import'}>
+      <label>Catalogusbestand<FileUpload accept=".json,application/json" disabled={busy} onChange={event => {
         const file = event.target.files?.[0]
         setBundle(undefined)
         setImportIds([])
@@ -222,32 +237,36 @@ export function AdminPage({ accountId, groupId, openRecipe, revision }: { revisi
         <TermManagement pending={overview?.terms ?? []} published={overview?.publicIngredients ?? []}
           busy={busy} change={change}/>
       </section>
-      <section className="panel people-panel" hidden={section !== "accounts"}>
+      {section === 'accounts' && <div className="admin-account-actions"><p>{sections.accounts.description}</p><button className="button primary" onClick={() => { setError(''); setMessage(''); setInviteOpen(true) }}><Icon name="plus"/> Superuser uitnodigen</button></div>}
+      {inviteOpen && section === 'accounts' && <dialog ref={node => { if (node && !node.open) node.showModal() }} aria-labelledby="invite-superuser-title" onCancel={event => { if (event.target !== event.currentTarget) return; event.preventDefault(); if (!busy) setInviteOpen(false) }}>
+        <div className="dialog-content"><div className="dialog-heading"><h2 id="invite-superuser-title">Superuser uitnodigen</h2><button className="icon-button" disabled={busy} aria-label="Sluiten" onClick={() => setInviteOpen(false)}><Icon name="close"/></button></div>
+        <form className="invite-modal-form" onSubmit={event => form(event, 'invite-superuser')}>
+          <label>E-mailadres van bestaand account<input type="email" name="email" required maxLength={254}/></label>
+          <button className="button primary" disabled={busy}>Uitnodigen</button>
+        </form>{error && <p className="alert" role="alert">{error}</p>}{message && <p role="status">{message}</p>}</div>
+      </dialog>}
+      <section className="panel people-panel accounts-panel" hidden={section !== "accounts"}>
 
         <div className="form-row">
           <label>Zoeken<input type="search" value={accountSearch} onChange={event => setAccountSearch(event.target.value)}/></label>
           <label>Filter<select value={accountFilter} onChange={event => setAccountFilter(event.target.value)}>
             <option value="">Alle accounts</option><option value="blocked">Geblokkeerd</option><option value="active">Actief</option><option value="superuser">Superusers</option><option value="owner">Eigenaren</option><option value="member">Leden</option>
           </select></label>
-          <label>Sorteren op<select value={accountOrder} onChange={event => setAccountOrder(event.target.value)}>
-            <option value="name">Naam</option><option value="email">E-mailadres</option><option value="group">Groep</option><option value="created">Nieuwste eerst</option>
-          </select></label>
         </div>
-        <div className="admin-table-scroll"><table className="admin-table"><thead><tr><th>Naam</th><th>E-mailadres</th><th>Groep</th><th>Rechten</th><th>Status</th><th>Aangemaakt</th><th>Acties</th></tr></thead><tbody>
+        <div className="admin-table-scroll"><table className="admin-table"><thead><tr>{[['name', 'Naam'], ['email', 'E-mailadres'], ['group', 'Groep'], ['rights', 'Rechten'], ['status', 'Status'], ['created', 'Aangemaakt']].map(([key, label]) => <th key={key} aria-sort={accountOrder === key ? accountDescending ? 'descending' : 'ascending' : 'none'}><button className="table-sort" onClick={() => { setAccountDescending(accountOrder === key ? !accountDescending : false); setAccountOrder(key) }}>{label}<span aria-hidden="true">{accountOrder === key ? accountDescending ? '↓' : '↑' : '↕'}</span></button></th>)}<th>Acties</th></tr></thead><tbody>
         {overview?.accounts.filter(item => nameKey(item.name + ' ' + item.email + ' ' + overview.groups.find(group => group.id === item.groupId)?.name).includes(nameKey(accountSearch)))
           .filter(item => !accountFilter || (accountFilter === 'blocked' ? !!item.blocked : accountFilter === 'active' ? !item.blocked : accountFilter === 'superuser' ? !!item.superuser : item.role === accountFilter))
-          .sort((a, b) => accountOrder === 'created' ? (b.created ?? 0) - (a.created ?? 0) : (accountOrder === 'group' ? overview.groups.find(g => g.id === a.groupId)?.name ?? '' : a[accountOrder as 'name' | 'email']).localeCompare(accountOrder === 'group' ? overview.groups.find(g => g.id === b.groupId)?.name ?? '' : b[accountOrder as 'name' | 'email'], 'nl'))
+          .sort((a, b) => {
+            const value = (item: ManagedAccount) => accountOrder === 'created' ? item.created ?? 0 : accountOrder === 'group' ? overview.groups.find(g => g.id === item.groupId)?.name ?? '' : accountOrder === 'rights' ? (item.superuser ? 'Superuser · ' : '') + (item.role === 'owner' ? 'Eigenaar' : 'Lid') : accountOrder === 'status' ? item.blocked ? 'Geblokkeerd' : 'Actief' : item[accountOrder as 'name' | 'email']
+            const left = value(a), right = value(b)
+            return (typeof left === 'number' && typeof right === 'number' ? left - right : String(left).localeCompare(String(right), 'nl')) * (accountDescending ? -1 : 1)
+          })
           .map(item => <tr key={item.id}><td>{item.name}</td><td>{item.email}</td><td>{overview.groups.find(group => group.id === item.groupId)?.name}</td><td>{item.superuser ? 'Superuser · ' : ''}{item.role === 'owner' ? 'Eigenaar' : 'Lid'}</td><td>{item.blocked ? 'Geblokkeerd' : 'Actief'}</td><td>{dateLabel(item.created)}</td><td><div className="form-row">
           <button className="button" disabled={busy || item.id === accountId} onClick={() => void change('admin-block', { kind: 'account', id: item.id, blocked: !item.blocked })}>{item.blocked ? 'Deblokkeren' : 'Blokkeren'}</button>
           {!!item.granted && item.id !== accountId && <button className="button danger" disabled={busy}
             onClick={() => void change('admin-revoke', { id: item.id })}>Beheerrechten intrekken</button>}
         </div></td></tr>)}
         </tbody></table></div>
-        <h3>Superuser uitnodigen</h3>
-        <form className="form-row" onSubmit={event => form(event, 'invite-superuser')}>
-          <label>E-mailadres van bestaand account<input type="email" name="email" required maxLength={254}/></label>
-          <button className="button primary" disabled={busy}>Uitnodigen</button>
-        </form>
       </section>
       <section className="panel people-panel" hidden={section !== "groups"}>
 

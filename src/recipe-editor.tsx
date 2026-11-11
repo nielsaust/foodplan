@@ -1,3 +1,4 @@
+import { FileUpload } from './file-upload'
 import { nutritionLabels, allergyTags, isAllergyTag } from '../domain/catalog'
 import type { NutritionValues } from '../domain/catalog'
 import { useState } from 'react'
@@ -96,7 +97,7 @@ export function RecipeEditor({ recipe, busy, publicTerms, privateTerms, onSave, 
       tags: newTags.filter(item => selectedTags.includes(item.id)),
     })
   }}>
-    <label>Receptafbeelding<input type="file" accept="image/jpeg,image/png,image/webp" disabled={loadingImage || busy} onChange={async event => {
+    <label>Receptafbeelding<FileUpload accept="image/jpeg,image/png,image/webp" disabled={loadingImage || busy} onChange={async event => {
       const file = event.target.files?.[0]
       event.currentTarget.value = ''
       if (!file) return

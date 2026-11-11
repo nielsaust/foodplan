@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 
 const paths: Record<string, ReactNode> = {
+  upload: <path d="M12 16V3m-5 5 5-5 5 5M4 15v5h16v-5"/>,
   link: <><path d="m10 13 4-4m-6 6-1 1a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0m2 3 1-1a4 4 0 0 1 6 6l-4 4a4 4 0 0 1-6 0"/></>,
   unlink: <><path d="m3 3 18 18M8 15l-1 1a4 4 0 0 1-6-6l3-3m9 2 1-1a4 4 0 0 1 6 6l-2 2M9 3l1-2m11 20 1-2"/></>,
   lock: <><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></>,

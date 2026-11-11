@@ -1,3 +1,4 @@
+import { FileUpload } from './file-upload'
 import { cookingPortions } from '../domain/planning'
 import { pagePaths, pageFromPath, adminSections } from '../domain/navigation'
 import { TermPicker } from './term-picker'
@@ -86,7 +87,7 @@ function Dialog({ title, children, close, printable, fullscreen }: { title: stri
   const titleId = useId()
   const ref = useRef<HTMLDialogElement>(null)
   useEffect(() => { ref.current?.showModal() }, [])
-  return <dialog className={printable ? "recipe-print-dialog mobile-fullscreen" : fullscreen ? "mobile-fullscreen" : undefined} ref={ref} aria-labelledby={titleId} onCancel={event => { event.preventDefault(); close() }}
+  return <dialog className={printable ? "recipe-print-dialog mobile-fullscreen" : fullscreen ? "mobile-fullscreen" : undefined} ref={ref} aria-labelledby={titleId} onCancel={event => { if (event.target !== event.currentTarget) return; event.preventDefault(); close() }}
     onClick={event => { if (event.target === event.currentTarget) close() }}>
     <div className="dialog-content">
       <div className="dialog-heading"><h2 id={titleId}>{title}</h2><div className="dialog-heading-actions">
@@ -142,7 +143,7 @@ function Settings({ busy, error, restore, clearDatabase, close }: {
         setReading(false)
       }
     }}>
-      <label>Back-upbestand<input ref={fileInput} type="file" accept=".json,application/json" required disabled={pending}
+      <label>Back-upbestand<FileUpload ref={fileInput} accept=".json,application/json" required disabled={pending}
         onChange={event => {
           setFile(event.target.files?.[0])
           setConfirmed(false)
@@ -206,7 +207,7 @@ function CookingMode({ title, steps, initialStep, close }: { title: string; step
   }, [index])
 
   return <dialog ref={dialog} className="cooking-dialog" aria-labelledby={titleId}
-    onCancel={event => { event.preventDefault(); close() }}>
+    onCancel={event => { if (event.target !== event.currentTarget) return; event.preventDefault(); close() }}>
     <header className="cooking-header">
       <button className="button" onClick={close}><Icon name="left"/> Hele recept</button>
       <strong id={titleId}>{title}</strong>
