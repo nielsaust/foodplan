@@ -5,7 +5,7 @@ import { convertQuantity } from './units.ts'
 import type { UnitSystem } from './units.ts'
 
 export type Person = { id: string; name: string; factor: number }
-export type Meal = { date: string; recipeId: string; text?: string }
+export type Meal = { date: string; recipeId: string; text?: string; leftoverOf?: string }
 export type Extra = { id: string; name: string; checked: boolean }
 export type State = {
   household: { id: string; name: string }
@@ -41,7 +41,7 @@ export type Action =
   | { type: 'moveMeal'; from: string; to: string; recipeId: string; text?: string; insert?: boolean }
   | { type: 'person'; id: string; name: string; factor: number }
   | { type: 'removePerson'; id: string }
-  | { type: 'meal'; date: string; recipeId: string | null; text?: string }
+  | { type: 'meal'; date: string; recipeId: string | null; text?: string; leftoverOf?: string }
   | { type: 'copyWeek'; from: string }
   | { type: 'attendance'; date: string; id: string; present: boolean }
   | { type: 'checkAll'; start: string; days: number; checked?: boolean }
@@ -83,6 +83,9 @@ export const amount = (value: number, unit: string) => quantity.format(value) + 
 
 export const purchaseKey = (id: string, date: string, quantity: number) => JSON.stringify([id, date, quantity])
 
+export const cookingPortions = (state: State, date: string) => portions(diners(state, date)) +
+  state.meals.filter(meal => meal.leftoverOf === date).reduce((sum, meal) => sum + portions(diners(state, meal.date)), 0)
+
 export function shoppingItems(state: State, start: string, days: number) {
   const catalog = householdRecipes(state)
   const ingredients = householdIngredients(state)
@@ -90,8 +93,8 @@ export function shoppingItems(state: State, start: string, days: number) {
   const totals = new Map<string, { total: number; uses: [string, number][] }>()
   for (const date of datesFrom(start, days)) {
     const meal = state.meals.find(item => item.date === date)
-    const scale = portions(diners(state, date))
-    if (!meal || !scale || !catalog[meal.recipeId]) continue
+    const scale = cookingPortions(state, date)
+    if (!meal || meal.leftoverOf || !scale || !catalog[meal.recipeId]) continue
     for (const [id, base] of Object.entries(catalog[meal.recipeId].amounts)) {
       if (!ingredients[id].group) continue
       const value = base * scale

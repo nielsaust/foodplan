@@ -161,6 +161,7 @@ function importState(backup, publicRecipes) {
   requireInput(Array.isArray(meals) && meals.every(meal =>
     record(meal) && dateOk(meal.date) && (meal.recipeId === '' ? nameOk(meal.text, 160) : idOk(meal.recipeId) && Object.hasOwn(catalog, meal.recipeId) && meal.text === undefined)
   ) && unique(meals, meal => meal.date))
+  requireInput(meals.every(meal => meal.leftoverOf === undefined || (dateOk(meal.leftoverOf) && [1, 2, 3].some(days => addDays(meal.leftoverOf, days) === meal.date) && meals.some(source => source.date === meal.leftoverOf && !source.leftoverOf && source.recipeId === meal.recipeId))))
   requireInput(record(attendance) && Object.entries(attendance).every(([date, ids]) =>
     dateOk(date) && Array.isArray(ids) && ids.every(id => peopleIds.has(id))
   ))
@@ -251,17 +252,21 @@ function apply(state, action, publicTerms = emptyTerms) {
       break
     }
     case 'meal':
+      if (action.leftoverOf !== undefined) {
+        const source = state.meals.find(item => item.date === action.leftoverOf && !item.leftoverOf && !item.text)
+        requireInput(dateOk(action.leftoverOf) && [1, 2, 3].some(days => addDays(action.leftoverOf, days) === action.date) && source?.recipeId === action.recipeId && action.text === undefined)
+      }
       requireInput(dateOk(action.date) && (action.text !== undefined ? nameOk(action.text, 160) && action.recipeId === null : action.recipeId === null || (idOk(action.recipeId) && canScheduleRecipe(state, action.recipeId))))
-      state.meals = state.meals.filter(item => item.date !== action.date)
+      state.meals = state.meals.filter(item => item.date !== action.date && item.leftoverOf !== action.date)
       if (action.text !== undefined) state.meals.push({ date: action.date, recipeId: '', text: action.text.trim() })
-      else if (action.recipeId) state.meals.push({ date: action.date, recipeId: action.recipeId })
+      else if (action.recipeId) state.meals.push({ date: action.date, recipeId: action.recipeId, ...(action.leftoverOf ? { leftoverOf: action.leftoverOf } : {}) })
       break
     case 'copyWeek': {
       requireInput(dateOk(action.from) && weekStart(action.from) === action.from)
       const dates = new Set(datesFrom(action.from, 7))
       for (const meal of state.meals.filter(item => dates.has(item.date) && (item.text || canScheduleRecipe(state, item.recipeId)))) {
         const date = addDays(meal.date, 7)
-        if (!state.meals.some(item => item.date === date)) state.meals.push({ ...meal, date })
+        if (!state.meals.some(item => item.date === date)) state.meals.push({ ...meal, date, ...(meal.leftoverOf ? { leftoverOf: addDays(meal.leftoverOf, 7) } : {}) })
       }
       break
     }
@@ -435,6 +440,9 @@ export function openStore(file) {
         else apply(next, action, action?.type === 'saveRecipe' ? publicTerms() : undefined)
         if (!restore && action.type === 'deleteRecipe' && db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'recipe_publications'").get()) {
           db.prepare("DELETE FROM recipe_publications WHERE group_id = ? AND recipe_id = ? AND status = 'pending'").run(groupId, action.id)
+        }
+        for (const meal of next.meals.filter(item => item.leftoverOf)) {
+          requireInput([1, 2, 3].some(days => addDays(meal.leftoverOf, days) === meal.date) && next.meals.some(source => source.date === meal.leftoverOf && !source.leftoverOf && source.recipeId === meal.recipeId))
         }
         const { publicRecipes, archivedRecipeIds, publicIngredients, ...persisted } = next
         update.run(JSON.stringify(persisted), groupId)

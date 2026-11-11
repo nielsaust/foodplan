@@ -683,7 +683,7 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 }
 
 /* Household members share fixed action columns, including linked accounts. */
-.household-name { margin: 20px 0; padding-bottom: 24px; border-bottom: 1px solid var(--line); }
+.household-name { margin: 20px 0 0; }
 .household-name label { flex: 1; min-width: 0; }
 .housemate { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 20px 0; }
 .housemate-owner { color: var(--green); font-size: .85rem; font-weight: 700; }
@@ -705,3 +705,51 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .housemate > .person-form { grid-template-columns: minmax(0, 1fr) 80px; }
   .housemate > .person-form::after { display: none; }
 }
+.person-submit-form { display: none; }
+.person-name-field { min-width: 0; }
+.person-name-field > label { display: block; margin-bottom: 6px; }
+.person-name-group { display: flex; align-items: stretch; min-width: 0; }
+.person-name-group > input { flex: 1; width: 0; min-width: 0; border-radius: 9px 0 0 9px; }
+.person-name-group:not(:has(.housemate-invitation)) > input { border-radius: 9px; }
+.person-name-group .housemate-invitation { flex: 0 0 126px; min-height: 0; display: flex; }
+.person-name-group .account-invite, .account-link-tag { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 100%; min-height: 42px; border: 1px solid var(--line); border-left: 0; border-radius: 0 9px 9px 0; background: #edf2e8; color: #264b35; font-size: .82rem; padding: 10px; white-space: nowrap; }
+.person-name-group .account-invite { background: #f8f5ed; }
+.housemate.is-owner { background: #f1f5eb; padding: 20px 17px; border-radius: 0; border-bottom: 1px solid var(--line); margin: 8px -17px 0; }
+.household-add, .household-members { margin-top: 24px; }
+.housemate > .person-form > label { width: auto; min-width: 0; }
+@media (max-width: 760px) {
+  .housemate > .person-form { grid-template-columns: minmax(0, 1fr) 86px auto; }
+  .housemate > .person-form > .danger { grid-column: 3; }
+  .housemate > .person-form::after { display: none; }
+  .person-name-group .housemate-invitation { flex-basis: 112px; }
+}
+@media (max-width: 480px) {
+  .housemate > .person-form { grid-template-columns: minmax(0, 1fr) 86px; }
+  .housemate > .person-form > .danger { grid-column: 2; }
+}
+
+.household-members-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+.household-members-heading h2 { margin: 0; }
+
+.leftover-options { display: grid; gap: 12px; }
+.leftover-options .button { justify-content: flex-start; text-align: left; }
+.day-meal-modes .button { min-width: 0; }
+@media (max-width: 420px) { .day-meal-modes .button { padding-inline: 8px; font-size: .85rem; } }
+
+.leftover-options { grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; }
+.leftover-options > p { grid-column: 1 / -1; }
+.leftover-card { min-width: 0; }
+.leftover-card .recipe-art { height: 100px; }
+.leftover-card .recipe-body { padding: 12px; }
+.leftover-card h3 { font-size: 1.05rem; overflow-wrap: anywhere; }
+.leftover-reference { margin-top: 24px; padding: 20px; background: var(--pale); border-radius: 12px; }
+.leftover-reference p { margin: 8px 0 16px; }
+@media (max-width: 420px) { .leftover-card .recipe-body { padding: 8px; } .leftover-card h3 { font-size: .9rem; } .leftover-card .recipe-art { height: 76px; } }
+
+.leftover-options { align-items: stretch; }
+.leftover-card { display: flex; flex-direction: column; height: 100%; }
+.leftover-day-banner { display: flex; align-items: center; justify-content: center; min-height: 38px; padding: 8px; background: var(--green); color: #fff; font-size: .82rem; font-weight: 700; width: 100%; }
+.leftover-image { height: 120px; width: 100%; flex-shrink: 0; overflow: hidden; background: var(--pale); }
+.leftover-image > .recipe-photo, .leftover-image > .recipe-placeholder { width: 100%; height: 100%; display: block; object-fit: cover; }
+.leftover-card .recipe-body { flex: 1; width: 100%; }
+@media (max-width: 420px) { .leftover-image { height: 90px; } }
