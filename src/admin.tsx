@@ -1,6 +1,6 @@
 import { Icon } from './visuals'
 import { nameKey, publicBaseTerms } from '../domain/terms'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import type { Ingredient, Recipe } from '../domain/catalog'
 
@@ -15,6 +15,7 @@ const sections = {
   publications: { title: 'Receptpublicaties', description: 'Beoordeel inzendingen en beheer gepubliceerde recepten.' },
   terms: { title: 'Ingrediënten en kenmerken', description: 'Bekijk nieuwe termen en maak ze publiek.' },
   accounts: { title: 'Accounts', description: 'Beheer gebruikers en beheerrechten.' },
+  emails: { title: 'Accountmails', description: 'Bewerk Nederlandse mailteksten en bekijk een voorbeeld.' },
   groups: { title: 'Groepen', description: 'Bekijk en beheer huishoudens.' },
 }
 type Section = keyof typeof sections
@@ -194,6 +195,7 @@ export function AdminPage({ accountId, groupId, openRecipe, revision }: { revisi
         </table></div>
         {!visible.length && <p>Geen recepten gevonden.</p>}
       </section>
+      {section === "emails" && <EmailManagement/>}
       <section className="panel people-panel" hidden={section !== "terms"}>
 
         <TermManagement pending={overview?.terms ?? []} published={overview?.publicIngredients ?? []}
@@ -370,4 +372,98 @@ function TermManagement({ pending, published, busy, change }: {
       <button className="icon-button" aria-label="Volgende pagina" disabled={locked || currentPage + 1 === pageCount} onClick={() => goToPage(currentPage + 1)}><Icon name="right"/></button>
     </div>}
   </>
+}
+
+
+type EmailTemplate = { kind: string; name: string; subject: string; heading: string; body: string; button: string; footer: string }
+function EmailManagement() {
+  const [templates, setTemplates] = useState<EmailTemplate[]>([])
+  const [kind, setKind] = useState('register')
+  const [previewMode, setPreviewMode] = useState<'html' | 'text'>('html')
+  const previewId = useId()
+  const [preview, setPreview] = useState<{ subject: string; html: string; text: string }>()
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+  const requestVersion = useRef(0)
+  const draft = templates.find(item => item.kind === kind)
+  useEffect(() => {
+    let active = true
+    void adminRequest<{ templates: EmailTemplate[] }>('email-templates').then(result => {
+      if (active) setTemplates(result.templates)
+    }).catch(failure => { if (active) setError(failure.message) })
+    return () => { active = false }
+  }, [])
+  function update(field: keyof EmailTemplate, value: string) {
+    requestVersion.current++
+    setTemplates(current => current.map(item => item.kind === kind ? { ...item, [field]: value } : item))
+    setPreview(undefined)
+    setMessage('')
+  }
+  async function run(action: 'save' | 'preview') {
+    const version = ++requestVersion.current
+    setBusy(true)
+    setError('')
+    setMessage('')
+    try {
+      if (action === 'save') {
+        await adminRequest('email-template-save', { kind, template: draft })
+        if (version === requestVersion.current) setMessage('Opgeslagen. Nieuwe mails gebruiken deze teksten.')
+      } else {
+        const result = await adminRequest<{ subject: string; html: string; text: string }>('email-template-preview', { kind, template: draft })
+        if (version === requestVersion.current) setPreview(result)
+      }
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'De aanvraag is mislukt.')
+    } finally { setBusy(false) }
+  }
+  return <section className="panel email-management">
+    <label>Accountmail<select value={kind} disabled={busy} onChange={event => {
+      requestVersion.current++
+      setKind(event.target.value)
+      setPreview(undefined)
+      setMessage('')
+      setError('')
+    }}>{templates.map(item => <option key={item.kind} value={item.kind}>{item.name}</option>)}</select></label>
+    {error && <p className="alert" role="alert">{error}</p>}
+    {draft && <form className="email-template-form" onSubmit={event => { event.preventDefault(); void run('save') }}>
+      <p className="fine-print">Je kunt {'{naam}'}, {'{groep}'} en {'{geldigheid}'} gebruiken. De actieknop en herstel-link worden automatisch toegevoegd.</p>
+      <fieldset disabled={busy}>
+        <legend>Nederlandse teksten</legend>
+        <label>Onderwerp<input required maxLength={200} value={draft.subject} onChange={event => update('subject', event.target.value)}/></label>
+        <label>Titel<input required maxLength={160} value={draft.heading} onChange={event => update('heading', event.target.value)}/></label>
+        <label>Bericht<textarea required maxLength={4000} rows={7} value={draft.body} onChange={event => update('body', event.target.value)}/></label>
+        <label>Tekst op de knop<input required maxLength={80} value={draft.button} onChange={event => update('button', event.target.value)}/></label>
+        <label>Voettekst<textarea required maxLength={800} rows={3} value={draft.footer} onChange={event => update('footer', event.target.value)}/></label>
+      </fieldset>
+      <div className="form-row">
+        <button className="button primary" disabled={busy}>Teksten opslaan</button>
+        <button type="button" className="button" disabled={busy} onClick={() => void run('preview')}>Voorbeeld bekijken</button>
+      </div>
+    </form>}
+    {message && <p role="status">{message}</p>}
+    {preview && <section className="email-preview">
+      <h2>Voorbeeld</h2>
+      <p className="email-preview-subject">Onderwerp: <strong>{preview.subject}</strong></p>
+      <div className="email-preview-frame">
+        <div className="email-preview-tabs" role="tablist" aria-label="Voorbeeldweergave">
+          {(['html', 'text'] as const).map(mode => <button key={mode} type="button" role="tab"
+            id={previewId + '-' + mode} aria-selected={previewMode === mode} aria-controls={previewId + '-panel'}
+            tabIndex={previewMode === mode ? 0 : -1}
+            onClick={() => setPreviewMode(mode)}
+            onKeyDown={event => {
+              if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+                event.preventDefault()
+                const next = event.key === 'Home' ? 'html' : event.key === 'End' ? 'text' : mode === 'html' ? 'text' : 'html'
+                setPreviewMode(next)
+                document.getElementById(previewId + '-' + next)?.focus()
+              }
+            }}>{mode === 'html' ? 'HTML' : 'Text'}</button>)}
+        </div>
+        <div id={previewId + '-panel'} role="tabpanel" aria-labelledby={previewId + '-' + previewMode} tabIndex={0}>
+          {previewMode === 'html' ? <iframe title="Voorbeeld accountmail" sandbox="" srcDoc={preview.html}/> : <pre>{preview.text}</pre>}
+        </div>
+      </div>
+    </section>}
+  </section>
 }

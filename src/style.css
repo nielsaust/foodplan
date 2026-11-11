@@ -651,3 +651,22 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .cooking-counter:focus { outline: none; }
 .cooking-step { touch-action: pan-y; }
 .dialog-content .cooking-instruction p { margin: 0; }
+
+.email-management { padding: 24px; }
+.email-management > label { max-width: 420px; }
+.email-template-form { display: grid; gap: 16px; margin-top: 16px; }
+.email-template-form fieldset { min-width: 0; margin: 0; padding: 20px; border: 0; border-radius: 12px; background: var(--pale); }
+.email-template-form legend { padding: 8px 12px; font-weight: 700; color: var(--green); }
+.email-template-form fieldset label + label { margin-top: 16px; }
+.email-preview { margin-top: 24px; }
+.email-preview iframe { width: 100%; height: 700px; border: 1px solid var(--line); border-radius: 12px; margin-top: 12px; background: var(--paper); }
+.email-preview pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.6; }
+
+
+.email-preview .email-preview-subject { margin-top: 14px; margin-bottom: 16px; }
+.email-preview-frame { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--paper); }
+.email-preview-tabs { display: flex; justify-content: end; padding: 6px 6px 0; border-bottom: 1px solid var(--line); background: var(--pale); }
+.email-preview-tabs button { padding: 10px 18px; border: 1px solid transparent; border-bottom: 0; border-radius: 8px 8px 0 0; background: transparent; font: inherit; font-weight: 650; color: var(--muted); }
+.email-preview-tabs button[aria-selected="true"] { background: var(--paper); border-color: var(--line); color: var(--green); }
+.email-preview-frame iframe { display: block; margin: 0; border: 0; border-radius: 0; }
+.email-preview-frame pre { height: 700px; overflow: auto; padding: 24px; margin: 0; }

@@ -1,3 +1,4 @@
+import { createEmailTemplates } from './email-templates.mjs'
 import { dietTags } from '../domain/catalog.ts'
 import { createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'node:crypto'
 import { promisify } from 'node:util'
@@ -13,7 +14,6 @@ const validToken = value => typeof value === 'string' && /^[a-zA-Z0-9_-]{43}$/.t
 const minute = 60000
 const day = 1440 * minute
 const cookieName = 'foodplan_session'
-const safeHtml = value => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;')
 const neutralMail = { message: 'Als dit adres in aanmerking komt, ontvang je een e-mail.' }
 
 export class AuthError extends Error {
@@ -58,6 +58,7 @@ async function passwordHash(password) {
 
 export function createAuth(store, mail = sendMail) {
   const { db } = store
+  const emailTemplates = createEmailTemplates(db)
   const moderation = createModeration(store)
   db.exec(`
     CREATE TABLE IF NOT EXISTS accounts (
@@ -155,7 +156,7 @@ export function createAuth(store, mail = sendMail) {
     if (!link || !kinds.includes(link.kind)) throw new InputError('Deze link is verlopen of al gebruikt.')
     return link
   }
-  async function sendLink(kind, email, payload, subject, instruction, lifetime) {
+  async function sendLink(kind, email, payload, lifetime) {
     const raw = token()
     const hash = digest(raw)
     const now = Date.now()
@@ -164,11 +165,12 @@ export function createAuth(store, mail = sendMail) {
     const url = new URL(publicUrl)
     url.hash = new URLSearchParams({ action: kind === 'reset' ? 'reset' : kind === 'superuser' ? 'accept-superuser' : 'accept', token: raw }).toString()
     try {
-      await mail({
-        to: email, subject,
-        text: instruction + '\n\n' + url.href + '\n\nKun je deze e-mail niet plaatsen? Dan kun je hem negeren.',
-        html: '<p>' + safeHtml(instruction) + '</p><p><a href="' + safeHtml(url.href) + '">Open Foodplan</a></p><p>Kun je deze e-mail niet plaatsen? Dan kun je hem negeren.</p>',
-      })
+      const group = payload.groupId ? store.read(payload.groupId).state.household.name : payload.group
+      await mail({ to: email, ...emailTemplates.render(kind, {
+        naam: payload.name || byEmail.get(email)?.name || 'daar',
+        groep: group || 'je huishouden',
+        geldigheid: lifetime === 7 * day ? '7 dagen' : lifetime === day ? '24 uur' : '1 uur',
+      }, url.href) })
     } catch {
       removeLink.run(hash)
       throw new AuthError(503, 'E-mail versturen is nu niet gelukt. Probeer het later opnieuw.')
@@ -225,6 +227,15 @@ export function createAuth(store, mail = sendMail) {
       case 'catalog-import':
         requireSuperuser(current)
         return moderation.importCatalog(current.groupId, body.bundle, body.ids)
+      case 'email-templates':
+        requireSuperuser(current)
+        return { templates: emailTemplates.list() }
+      case 'email-template-save':
+        requireSuperuser(current)
+        return emailTemplates.save(body.kind, body.template)
+      case 'email-template-preview':
+        requireSuperuser(current)
+        return emailTemplates.preview(body.kind, body.template)
       case 'admin-overview':
         requireSuperuser(current)
         return { ...management(), publications: moderation.list(), terms: moderation.pendingTerms(), publicIngredients: store.publicTerms().ingredients }
@@ -336,8 +347,7 @@ export function createAuth(store, mail = sendMail) {
         if (email === rootEmail || db.prepare('SELECT 1 FROM superusers WHERE account_id = ?').get(account.id)) {
           throw new InputError('Dit account is al superuser.')
         }
-        await sendLink('superuser', email, {}, 'Uitnodiging voor Foodplan-beheer',
-          'Open de link en gebruik je wachtwoord om de beheeruitnodiging te accepteren.', day)
+        await sendLink('superuser', email, {}, day)
         return { message: 'Uitnodiging verstuurd.' }
       }
       case 'accept-superuser': {
@@ -356,8 +366,7 @@ export function createAuth(store, mail = sendMail) {
         const group = email === bootstrapEmail ? '' : label(body.group, 80, 'Vul een groepsnaam in.')
         throttle('register:' + email, 4)
         if (!byEmail.get(email)) {
-          await sendLink('register', email, { name, group }, 'Bevestig je Foodplan-account',
-            'Bevestig je e-mailadres en kies een wachtwoord.', day)
+          await sendLink('register', email, { name, group }, day)
         }
         return neutralMail
       }
@@ -373,8 +382,7 @@ export function createAuth(store, mail = sendMail) {
         if (personId && (!person || db.prepare('SELECT 1 FROM group_memberships WHERE group_id = ? AND person_id = ?').get(current.groupId, personId))) {
           throw new InputError('Deze huisgenoot is niet beschikbaar om te koppelen.')
         }
-        await sendLink('invite', email, { groupId: current.groupId, personId }, 'Uitnodiging voor Foodplan',
-          'Je bent uitgenodigd voor de groep ' + state.household.name + '.', 7 * day)
+        await sendLink('invite', email, { groupId: current.groupId, personId }, 7 * day)
         return { message: 'Uitnodiging verstuurd.' }
       }
       case 'accept': {
@@ -419,8 +427,7 @@ export function createAuth(store, mail = sendMail) {
         const email = emailAddress(body.email)
         throttle('forgot:' + email, 4)
         if (byEmail.get(email)) {
-          void sendLink('reset', email, {}, 'Nieuw wachtwoord voor Foodplan',
-            'Kies binnen een uur een nieuw wachtwoord voor je account.', 60 * minute)
+          void sendLink('reset', email, {}, 60 * minute)
             .catch(() => console.error('Een wachtwoordherstelmail kon niet worden verstuurd.'))
         }
         return neutralMail
