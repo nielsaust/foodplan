@@ -185,11 +185,12 @@ function Nutrition({ recipe }: { recipe: Recipe }) {
   return parts.length ? <small className="nutrition">{recipe.nutrition ? '' : 'Ca. '}{parts.join(' · ')} per portie</small> : null
 }
 
-function CookingMode({ title, steps, close }: { title: string; steps: ReactNode[]; close: () => void }) {
+function CookingMode({ title, steps, initialStep, close }: { title: string; steps: ReactNode[]; initialStep: number; close: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null)
   const heading = useRef<HTMLHeadingElement>(null)
   const titleId = useId()
-  const [index, setIndex] = useState(0)
+  const [index, setIndex] = useState(initialStep)
+  const swipe = useRef<{ x: number; y: number } | null>(null)
   const last = index === steps.length - 1
 
   useEffect(() => {
@@ -208,10 +209,24 @@ function CookingMode({ title, steps, close }: { title: string; steps: ReactNode[
       <button className="button" onClick={close}><Icon name="left"/> Hele recept</button>
       <strong id={titleId}>{title}</strong>
     </header>
-    <section className="cooking-step" key={index}>
+    <progress className="cooking-progress" aria-label="Voortgang van het recept" value={index + 1} max={steps.length}/>
+    <h2 className="cooking-counter" ref={heading} tabIndex={-1}>Stap {index + 1} van {steps.length}</h2>
+    <section className="cooking-step" key={index}
+      onTouchStart={event => {
+        swipe.current = event.touches.length === 1 ? { x: event.touches[0].clientX, y: event.touches[0].clientY } : null
+      }}
+      onTouchCancel={() => { swipe.current = null }}
+      onTouchEnd={event => {
+        const start = swipe.current
+        swipe.current = null
+        if (!start || !event.changedTouches.length) return
+        const dx = event.changedTouches[0].clientX - start.x
+        const dy = event.changedTouches[0].clientY - start.y
+        if (Math.abs(dx) >= 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+          setIndex(value => Math.max(0, Math.min(steps.length - 1, value + (dx < 0 ? 1 : -1))))
+        }
+      }}>
       <div className="cooking-instruction">
-        <h2 ref={heading} tabIndex={-1}>Stap {index + 1} van {steps.length}</h2>
-        <progress aria-label="Voortgang van het recept" value={index + 1} max={steps.length}/>
         <p>{steps[index]}</p>
       </div>
     </section>
@@ -233,7 +248,7 @@ function RecipeDetail({ recipe, date, state, save, close, busy, edit, copy, publ
   const [planning, setPlanning] = useState(false)
   const planningId = useId()
   const [scale, setScale] = useState(date ? portions(diners(state, date)) : 1)
-  const [cooking, setCooking] = useState(false)
+  const [cooking, setCooking] = useState<number | null>(null)
   const planningDays = datesFrom(today(), 7)
   const describe = (id: string, fraction = 1) => {
     const item = ingredients[id]
@@ -308,10 +323,12 @@ function RecipeDetail({ recipe, date, state, save, close, busy, edit, copy, publ
     <ul className="ingredients">{Object.entries(recipe.amounts).map(([id, base]) => <li key={id}><span>{ingredients[id].name}</span><strong>{ingredientAmount(base * scale, ingredients[id].unit, unitSystem)}</strong></li>)}</ul>
     <div className="steps-heading">
       <h3>Stap voor stap</h3>
-      <button className="button" onClick={() => setCooking(true)}>Kookmodus</button>
+      <button className="button" onClick={() => setCooking(0)}>Kookmodus</button>
     </div>
-    <ol className="steps">{steps.map((step, index) => <li key={index}>{step}</li>)}</ol>
-    {cooking && <CookingMode title={recipe.title} steps={steps} close={() => setCooking(false)}/>}
+    <ol className="steps">{steps.map((step, index) => <li key={index}><div className="recipe-step-row"><span>{step}</span>
+      <button className="icon-button" title={'Open stap ' + (index + 1) + ' in kookmodus'} aria-label={'Open stap ' + (index + 1) + ' in kookmodus'} onClick={() => setCooking(index)}><Icon name="book"/></button>
+    </div></li>)}</ol>
+    {cooking !== null && <CookingMode title={recipe.title} steps={steps} initialStep={cooking} close={() => setCooking(null)}/>}
 
     {publish && <div className="dialog-footer">
       <button className="button" disabled={publishing || !!publicationMessage} onClick={async () => {

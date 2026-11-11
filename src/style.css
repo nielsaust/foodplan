@@ -442,7 +442,7 @@ select {
 
 .cooking-dialog[open] {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto 5px auto minmax(0, 1fr) auto;
   position: fixed;
   inset: 0;
   width: 100%;
@@ -638,3 +638,16 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   }
   .shop-controls input, .shop-controls select { height: 46px; }
 }
+
+
+.recipe-step-row { display: flex; align-items: start; gap: 12px; }
+.recipe-step-row > span { flex: 1; min-width: 0; }
+.recipe-step-row .icon-button { color: var(--muted); }
+.cooking-progress { display: block; appearance: none; border: 0; margin: 0; height: 5px; width: 100%; background: var(--line); border-radius: 0; }
+.cooking-progress::-webkit-progress-bar { background: var(--line); }
+.cooking-progress::-webkit-progress-value { background: var(--green); }
+.cooking-progress::-moz-progress-bar { background: var(--green); }
+.cooking-counter { padding: 12px clamp(20px, 5vw, 56px) 0; background: var(--pale); text-align: right; font: 650 .9rem/1.4 system-ui, sans-serif; letter-spacing: normal; color: var(--muted); }
+.cooking-counter:focus { outline: none; }
+.cooking-step { touch-action: pan-y; }
+.dialog-content .cooking-instruction p { margin: 0; }
