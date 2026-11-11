@@ -613,3 +613,28 @@ select {
 .recipe-thumb { display: block; overflow: hidden; }
 .recipe-thumb .recipe-placeholder { padding: 2px; }
 .collection-filter { margin-bottom: 22px; }
+
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+.shop-controls input[type="date"] {
+  appearance: none;
+  -webkit-appearance: none;
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 10px 12px;
+  text-align: left;
+  line-height: 22px;
+}
+.shop-controls input[type="date"]::-webkit-date-and-time-value {
+  min-height: 22px;
+  margin: 0;
+  padding: 0;
+  text-align: left;
+}
+.shop-controls input[type="date"]::-webkit-datetime-edit { padding: 0; }
+@media (max-width: 700px) {
+  input:not([type="checkbox"]):not([type="radio"]), select, textarea {
+    font-size: 16px;
+  }
+  .shop-controls input, .shop-controls select { height: 46px; }
+}
