@@ -4,7 +4,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { ingredientById, recipes, nutritionLabels } from '../domain/catalog.ts'
 import { baseTags, emptyTerms, nameKey } from '../domain/terms.ts'
 import { isUnit } from '../domain/units.ts'
-import { addDays, datesFrom, diners, householdRecipes, purchaseKey, shoppingItems, today, weekStart } from '../domain/planning.ts'
+import { addDays, datesFrom, diners, canScheduleRecipe, householdRecipes, purchaseKey, shoppingItems, today, weekStart } from '../domain/planning.ts'
 
 const nameOk = (value, max) => typeof value === 'string' && value.trim().length > 0 && value.trim().length <= max
 const idOk = value => typeof value === 'string' && /^[a-zA-Z0-9-]{1,64}$/.test(value)
@@ -36,12 +36,13 @@ const recipeTranslationFields = {
   steps: value => Array.isArray(value) && value.length <= 30 && value.every(step => nameOk(step, 600)),
 }
 
-export function validateTerm(term, kind) {
+export function validateTerm(term, kind, allowBuiltin = false) {
   const ingredient = kind === 'ingredient'
-  requireInput(record(term) && typeof term.id === 'string' && new RegExp('^' + kind + '-[a-f0-9]{32}$').test(term.id) &&
+  const builtin = ingredient && allowBuiltin && Object.hasOwn(ingredientById, term?.id) ? ingredientById[term.id] : undefined
+  requireInput(record(term) && typeof term.id === 'string' && (builtin || new RegExp('^' + kind + '-[a-f0-9]{32}$').test(term.id)) &&
     nameOk(term.name, ingredient ? 80 : 40) && localized(term.translations, { name: value => nameOk(value, ingredient ? 80 : 40) }) && (!ingredient || (typeof term.unit === 'string' && isUnit(term.unit) && (term.code === undefined || (typeof term.code === 'string' && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(term.code) && term.code.length <= 64)))))
   return ingredient
-    ? { id: term.id, name: term.name.trim(), unit: term.unit, code: term.code, group: 'Overige ingrediënten', translations: term.translations }
+    ? { id: term.id, name: term.name.trim(), unit: builtin?.unit ?? term.unit, code: term.code, group: builtin?.group ?? 'Overige ingrediënten', shelfDays: builtin?.shelfDays, translations: term.translations }
     : { id: term.id, name: term.name.trim(), translations: term.translations }
 }
 
@@ -132,7 +133,7 @@ export function validateRecipe(recipe, ingredients = ingredientById, tags = base
   }
 }
 
-function importState(backup) {
+function importState(backup, publicRecipes) {
   const unique = (values, key) => new Set(values.map(key)).size === values.length
   if (backup?.format !== 'aan-tafel' || backup.version !== 1 || !record(backup.state)) {
     throw new InputError('Kies een geldig Aan tafel-back-upbestand.')
@@ -156,7 +157,7 @@ function importState(backup) {
       validateRecipe(recipe, { ...ingredientById, ...customIngredients }, { ...baseTagById, ...customTags })
     }
   }
-  const catalog = householdRecipes({ recipeEdits, includeStarterRecipes })
+  const catalog = householdRecipes({ recipeEdits, includeStarterRecipes, publicRecipes })
   requireInput(Array.isArray(meals) && meals.every(meal =>
     record(meal) && dateOk(meal.date) && idOk(meal.recipeId) && Object.hasOwn(catalog, meal.recipeId)
   ) && unique(meals, meal => meal.date))
@@ -228,19 +229,32 @@ function apply(state, action, publicTerms = emptyTerms) {
       const destination = state.meals.find(item => item.date === action.to)
       if (!meal && destination?.recipeId === action.recipeId) break
       if (meal?.recipeId !== action.recipeId) throw new InputError('De maaltijd op de oorspronkelijke dag is veranderd.')
-      if (destination) throw new InputError('Op die dag staat al een maaltijd. Kies een vrije dag.')
+      if (destination && !action.insert) throw new InputError('Op die dag staat al een maaltijd. Kies een vrije dag.')
+      if (!canScheduleRecipe(state, meal.recipeId)) throw new InputError('Dit recept is verborgen. Bewaar het als privérecept om het opnieuw in te plannen.')
+      if (action.insert) {
+        const occupied = new Map(state.meals.filter(item => item !== meal).map(item => [item.date, item]))
+        let date = action.to
+        let displaced = occupied.get(date)
+        while (displaced) {
+          const next = addDays(date, 1)
+          requireInput(dateOk(next))
+          displaced.date = next
+          date = next
+          displaced = occupied.get(date)
+        }
+      }
       meal.date = action.to
       break
     }
     case 'meal':
-      requireInput(dateOk(action.date) && (action.recipeId === null || (idOk(action.recipeId) && Object.hasOwn(householdRecipes(state), action.recipeId))))
+      requireInput(dateOk(action.date) && (action.recipeId === null || (idOk(action.recipeId) && canScheduleRecipe(state, action.recipeId))))
       state.meals = state.meals.filter(item => item.date !== action.date)
       if (action.recipeId) state.meals.push({ date: action.date, recipeId: action.recipeId })
       break
     case 'copyWeek': {
       requireInput(dateOk(action.from) && weekStart(action.from) === action.from)
       const dates = new Set(datesFrom(action.from, 7))
-      for (const meal of state.meals.filter(item => dates.has(item.date))) {
+      for (const meal of state.meals.filter(item => dates.has(item.date) && canScheduleRecipe(state, item.recipeId))) {
         const date = addDays(meal.date, 7)
         if (!state.meals.some(item => item.date === date)) state.meals.push({ ...meal, date })
       }
@@ -252,6 +266,17 @@ function apply(state, action, publicTerms = emptyTerms) {
       if (action.present) ids.add(action.id)
       else ids.delete(action.id)
       state.attendance[action.date] = [...ids]
+      break
+    }
+    case 'checkAll': {
+      requireInput(dateOk(action.start) && Number.isInteger(action.days) && action.days >= 1 && action.days <= 14 &&
+        (action.checked === undefined || typeof action.checked === 'boolean'))
+      const checked = action.checked ?? true
+      const visibleKeys = new Set(shoppingItems(state, action.start, action.days).map(item => item.key))
+      state.checked = checked
+        ? [...new Set([...state.checked, ...visibleKeys])]
+        : state.checked.filter(key => !visibleKeys.has(key))
+      state.extras = state.extras.map(item => ({ ...item, checked }))
       break
     }
     case 'removeChecked': {
@@ -387,7 +412,10 @@ export function openStore(file) {
     }
   })
 
+  let addCatalog = state => state
   return {
+    setCatalog(enrich) { addCatalog = enrich },
+    withCatalog: state => addCatalog(state),
     db, transaction, legacyGroupId, read, publicTerms,
     createGroup(groupId, name) {
       insert.run(groupId, 0, JSON.stringify({
@@ -397,14 +425,15 @@ export function openStore(file) {
     write(groupId, action, restore = false) {
       return transaction(() => {
         const { state, revision } = read(groupId)
-        const next = restore ? importState(action) : state
+        const next = restore ? importState(action, addCatalog({ meals: action?.state?.meals ?? [] }).publicRecipes) : addCatalog(state)
         if (restore) next.household = state.household
         else apply(next, action, action?.type === 'saveRecipe' ? publicTerms() : undefined)
         if (!restore && action.type === 'deleteRecipe' && db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'recipe_publications'").get()) {
           db.prepare("DELETE FROM recipe_publications WHERE group_id = ? AND recipe_id = ? AND status = 'pending'").run(groupId, action.id)
         }
-        update.run(JSON.stringify(next), groupId)
-        return { state: next, revision: revision + 1 }
+        const { publicRecipes, archivedRecipeIds, publicIngredients, ...persisted } = next
+        update.run(JSON.stringify(persisted), groupId)
+        return { state: persisted, revision: revision + 1 }
       })
     },
     addGroupPerson(groupId, person) {

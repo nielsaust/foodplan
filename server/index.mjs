@@ -9,7 +9,7 @@ import { InputError, openStore } from './store.mjs'
 const store = openStore(process.env.DATABASE_PATH || 'data/aan-tafel.sqlite')
 const auth = createAuth(store)
 function groupSnapshot(groupId, snapshot = store.read(groupId)) {
-  return { ...snapshot, state: { ...snapshot.state, linkedPeople: auth.linkedPeople(groupId) } }
+  return { ...snapshot, state: { ...store.withCatalog(snapshot.state), linkedPeople: auth.linkedPeople(groupId) } }
 }
 const root = resolve('dist')
 const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' }

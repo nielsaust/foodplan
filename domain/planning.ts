@@ -13,6 +13,9 @@ export type State = {
   linkedPeople?: string[]
   customIngredients?: Record<string, Ingredient>
   customTags?: Record<string, Tag>
+  publicRecipes?: Record<string, Recipe>
+  archivedRecipeIds?: string[]
+  publicIngredients?: Record<string, Ingredient>
   recipeEdits?: Record<string, Recipe>
   people: Person[]
   meals: Meal[]
@@ -21,21 +24,25 @@ export type State = {
   purchased?: string[]
   extras: Extra[]
 }
-export const householdRecipes = (state: State) => ({ ...(state.includeStarterRecipes === false ? {} : recipeById), ...state.recipeEdits })
+export const householdRecipes = (state: State) => ({ ...(state.publicRecipes ?? (state.includeStarterRecipes === false ? {} : recipeById)), ...state.recipeEdits })
 
-export const householdIngredients = (state: State) => ({ ...ingredientById, ...state.customIngredients })
+export const canScheduleRecipe = (state: State, id: string) =>
+  Object.hasOwn(householdRecipes(state), id) && (!state.archivedRecipeIds?.includes(id) || Object.hasOwn(state.recipeEdits ?? {}, id))
+
+export const householdIngredients = (state: State) => ({ ...ingredientById, ...state.publicIngredients, ...state.customIngredients })
 
 export type Action =
   | { type: 'clearDatabase' }
   | { type: 'copyPublicRecipe'; id: string; copyId: string }
   | { type: 'deleteRecipe'; id: string }
   | { type: 'saveRecipe'; recipe: Recipe; terms?: Terms }
-  | { type: 'moveMeal'; from: string; to: string; recipeId: string }
+  | { type: 'moveMeal'; from: string; to: string; recipeId: string; insert?: boolean }
   | { type: 'person'; id: string; name: string; factor: number }
   | { type: 'removePerson'; id: string }
   | { type: 'meal'; date: string; recipeId: string | null }
   | { type: 'copyWeek'; from: string }
   | { type: 'attendance'; date: string; id: string; present: boolean }
+  | { type: 'checkAll'; start: string; days: number; checked?: boolean }
   | { type: 'removeChecked'; start: string; days: number }
   | { type: 'check'; key: string; checked: boolean; start: string; days: number }
   | { type: 'extra'; id: string; name: string }
@@ -82,7 +89,7 @@ export function shoppingItems(state: State, start: string, days: number) {
   for (const date of datesFrom(start, days)) {
     const meal = state.meals.find(item => item.date === date)
     const scale = portions(diners(state, date))
-    if (!meal || !scale) continue
+    if (!meal || !scale || !catalog[meal.recipeId]) continue
     for (const [id, base] of Object.entries(catalog[meal.recipeId].amounts)) {
       if (!ingredients[id].group) continue
       const value = base * scale

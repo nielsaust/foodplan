@@ -21,18 +21,33 @@ export function createModeration(store) {
     const terms = new Map([...baseTags, ...store.publicTerms().tags].map(term => [term.id, term.name]))
     return recipe.tagIds.map((id, index) => terms.get(id) ?? recipe.tags[index])
   }
-  const publicRecipes = () => [
-    ...recipes.map(recipe => {
-      const edit = db.prepare('SELECT recipe FROM public_recipe_edits WHERE id = ?').get(recipe.id)
-      return edit ? JSON.parse(edit.recipe) : recipe
-    }),
-    ...db.prepare("SELECT recipe FROM recipe_publications WHERE status = 'approved' ORDER BY created DESC").all().map(row => {
-      const { catalogSnapshot, ...recipe } = JSON.parse(row.recipe)
-      return { ...recipe, tags: canonicalTags(recipe) }
-    }),
-  ]
+  db.exec('CREATE TABLE IF NOT EXISTS catalog_migrations (id TEXT PRIMARY KEY)')
+  store.transaction(() => {
+    if (!db.prepare("INSERT OR IGNORE INTO catalog_migrations VALUES ('starter-publications')").run().changes) return
+    const insert = db.prepare("INSERT INTO recipe_publications VALUES (?, ?, ?, ?, 'approved', ?)")
+    const edit = db.prepare('SELECT recipe FROM public_recipe_edits WHERE id = ?')
+    for (const recipe of recipes) {
+      insert.run(recipe.id, store.legacyGroupId, recipe.id, edit.get(recipe.id)?.recipe ?? JSON.stringify(recipe), 0)
+    }
+    db.exec('DELETE FROM public_recipe_edits')
+  })
+
+  function fromRow(row) {
+    const { catalogSnapshot, ...recipe } = JSON.parse(row.recipe)
+    return { ...recipe, tags: canonicalTags(recipe) }
+  }
+  const publicRecipes = () => db.prepare("SELECT recipe FROM recipe_publications WHERE status = 'approved' ORDER BY created DESC").all().map(fromRow)
+  store.setCatalog(state => {
+    const planned = new Set(Array.isArray(state.meals) ? state.meals.map(meal => meal?.recipeId) : [])
+    const archived = db.prepare("SELECT id, recipe FROM recipe_publications WHERE status = 'archived'").all().filter(row => planned.has(row.id))
+    return { ...state,
+      publicRecipes: Object.fromEntries([...publicRecipes(), ...archived.map(fromRow)].map(recipe => [recipe.id, recipe])),
+      archivedRecipeIds: archived.map(row => row.id),
+      publicIngredients: Object.fromEntries(store.publicTerms().ingredients.map(item => [item.id, item])),
+    }
+  })
   function codeTaken(code, id) {
-    if (Object.hasOwn(ingredientById, code) || /^ingredient-[a-f0-9]{32}$/.test(code)) return true
+    if ((code !== id && Object.hasOwn(ingredientById, code)) || /^ingredient-[a-f0-9]{32}$/.test(code)) return true
     return !!db.prepare(`
       SELECT 1 FROM public_terms WHERE kind = 'ingredient' AND id <> ? AND json_extract(data, '$.code') = ?
       UNION ALL
@@ -44,10 +59,11 @@ export function createModeration(store) {
 
   return {
     publicRecipes,
-    async suggestIngredientCode(name, id) {
+    async suggestIngredientCode(name, id, reserved = []) {
       if (typeof name !== 'string' || !name.trim() || name.length > 80 || typeof id !== 'string') {
         throw new InputError('Vul eerst een ingrediëntnaam in.')
       }
+      if (!Array.isArray(reserved) || reserved.length > 20 || reserved.some(code => typeof code !== 'string' || code.length > 64)) throw new InputError('Ongeldige selectie.')
       const url = new URL('https://api.mymemory.translated.net/get')
       url.search = new URLSearchParams({ q: name.trim(), langpair: 'nl|en' })
       let base
@@ -59,7 +75,7 @@ export function createModeration(store) {
       } catch { /* The administrator can enter a code manually. */ }
       if (!base) throw new InputError('Vertalen lukt nu niet. Vul zelf een Engelse code in.')
       let code = base
-      for (let suffix = 2; codeTaken(code, id); suffix++) code = base + '-' + suffix
+      for (let suffix = 2; codeTaken(code, id) || reserved.includes(code); suffix++) code = base + '-' + suffix
       return { code }
     },
     editIngredient({ groupId, id, name, code }) {
@@ -67,17 +83,18 @@ export function createModeration(store) {
         const published = db.prepare("SELECT data FROM public_terms WHERE id = ? AND kind = 'ingredient'").get(id)
         const row = groupId && db.prepare('SELECT data FROM group_states WHERE id = ?').get(groupId)
         const state = row ? JSON.parse(row.data) : undefined
-        const previous = published ? JSON.parse(published.data) : state?.customIngredients?.[id]
+        const builtin = Object.hasOwn(ingredientById, id) ? ingredientById[id] : undefined
+        const previous = published ? JSON.parse(published.data) : builtin ?? state?.customIngredients?.[id]
         if (!previous) throw new InputError('Dit ingrediënt bestaat niet meer.')
         if (typeof code !== 'string' || (code && codeTaken(code, id))) throw new InputError('Deze ingrediëntcode is al bezet of ongeldig.')
-        const term = validateTerm({ ...previous, name, code: code || undefined }, 'ingredient')
-        if (published) {
-          db.prepare('UPDATE public_terms SET data = ? WHERE id = ?').run(JSON.stringify(term), id)
+        const term = validateTerm({ ...previous, name, code: code || undefined }, 'ingredient', true)
+        if (published || builtin) {
+          db.prepare("INSERT INTO public_terms VALUES (?, 'ingredient', ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data").run(id, JSON.stringify(term))
         }
         const linked = db.prepare("SELECT id, data FROM group_states WHERE json_type(data, '$.customIngredients') = 'object'").all()
         const update = db.prepare('UPDATE group_states SET data = ?, revision = revision + 1 WHERE id = ?')
         for (const row of linked) {
-          if (!published && row.id !== groupId) continue
+          if (!published && !builtin && row.id !== groupId) continue
           const household = JSON.parse(row.data)
           const existing = household.customIngredients[id]
           if (existing) {
@@ -98,9 +115,7 @@ export function createModeration(store) {
         throw new InputError('Gebruik alleen publieke kenmerken.')
       }
       const data = JSON.stringify({ id, title, subtitle, cuisine, description, minutes, theme, image, tagIds, amounts, steps, translations, source, nutrition, tags: labels })
-      if (recipes.some(item => item.id === id)) {
-        db.prepare('INSERT INTO public_recipe_edits VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET recipe = excluded.recipe').run(id, data)
-      } else if (!db.prepare("UPDATE recipe_publications SET recipe = ? WHERE id = ? AND status = 'approved'").run(data, id).changes) {
+      if (!db.prepare("UPDATE recipe_publications SET recipe = ? WHERE id = ? AND status = 'approved'").run(data, id).changes) {
         throw new InputError('Dit recept is niet meer publiek.')
       }
       return { recipe: JSON.parse(data) }
@@ -128,7 +143,7 @@ export function createModeration(store) {
       }
       return store.transaction(() => {
         const known = db.prepare('SELECT 1 FROM recipe_publications WHERE id = ?')
-        const additions = selected.filter(recipe => !recipes.some(starter => starter.id === recipe.id) && !known.get(recipe.id))
+        const additions = selected.filter(recipe => !known.get(recipe.id))
         const terms = store.publicTerms()
         const ingredients = { ...ingredientById, ...Object.fromEntries(terms.ingredients.map(term => [term.id, term])) }
         const tags = Object.fromEntries([...baseTags, ...terms.tags].map(term => [term.id, term]))
@@ -138,11 +153,14 @@ export function createModeration(store) {
             if (!entry || !additions.some(recipe => kind === 'ingredient'
               ? Object.hasOwn(recipe.amounts ?? {}, entry.id)
               : Array.isArray(recipe.tagIds) && recipe.tagIds.includes(entry.id))) continue
-            const term = validateTerm(entry, kind)
-            if (Object.hasOwn(target, term.id)) {
+            const term = validateTerm(entry, kind, true)
+            const builtin = kind === 'ingredient' && Object.hasOwn(ingredientById, term.id)
+            if (builtin && terms.ingredients.some(item => item.id === term.id)) continue
+            if (!builtin && Object.hasOwn(target, term.id)) {
               if (target[term.id].unit !== term.unit || target[term.id].name !== term.name) throw new InputError('Een term botst met de bestaande catalogus.')
               continue
             }
+            if (builtin && term.code && codeTaken(term.code, term.id)) throw new InputError('Deze ingrediëntcode is al bezet.')
             insertTerm.run(term.id, kind, JSON.stringify(term))
             target[term.id] = term
           }
@@ -184,7 +202,9 @@ export function createModeration(store) {
       }
     },
     copy(groupId, { id, copyId }) {
-      const recipe = publicRecipes().find(item => item.id === id)
+      const row = typeof id === 'string' && db.prepare("SELECT recipe, status FROM recipe_publications WHERE id = ? AND status IN ('approved', 'archived')").get(id)
+      const planned = store.read(groupId).state.meals.some(meal => meal.recipeId === id)
+      const recipe = row && (row.status === 'approved' || planned) ? fromRow(row) : undefined
       if (!recipe || typeof copyId !== 'string' || !/^[a-f0-9]{32}$/.test(copyId)) {
         throw new InputError('Dit publieke recept is niet beschikbaar.')
       }
@@ -211,7 +231,7 @@ export function createModeration(store) {
     },
     list() {
       return db.prepare(`
-        SELECT p.id, p.status, p.created, json_extract(p.recipe, '$.title') AS title,
+        SELECT p.id, p.status, NULLIF(p.created, 0) AS created, json_extract(p.recipe, '$.title') AS title,
                json_extract(g.data, '$.household.name') AS groupName
         FROM recipe_publications p JOIN group_states g ON g.id = p.group_id
         ORDER BY p.status = 'pending' DESC, p.created DESC
@@ -222,6 +242,12 @@ export function createModeration(store) {
       if (!row) throw new InputError('Publicatie bestaat niet.')
       const { catalogSnapshot, ...recipe } = JSON.parse(row.recipe)
       return { recipe: { ...recipe, tags: canonicalTags(recipe) }, ingredients: { ...ingredientById, ...Object.fromEntries(store.publicTerms().ingredients.map(term => [term.id, term])), ...catalogSnapshot?.ingredients } }
+    },
+    bulkDecide(ids, status) {
+      if (!Array.isArray(ids) || !ids.length || ids.length > 200 || new Set(ids).size !== ids.length) throw new InputError('Selecteer één tot 200 recepten.')
+      store.transaction(() => {
+        for (const id of ids) this.decide({ id, status })
+      })
     },
     decide({ id, status }) {
       if (typeof id !== 'string') throw new InputError('Kies een publicatie.')
@@ -239,10 +265,21 @@ export function createModeration(store) {
           throw new InputError('Publiceer eerst de privé-ingrediënten en kenmerken van dit recept. Koppel oude kenmerken zo nodig opnieuw in de recepteditor.')
         }
       }
-      const before = { approved: 'pending', rejected: 'pending', archived: 'approved' }[status]
-      if (!['approved', 'rejected', 'archived'].includes(status) || !db.prepare(
+      if (status === 'deleted') {
+        if (!db.prepare('DELETE FROM recipe_publications WHERE id = ?').run(id).changes) throw new InputError('Dit recept bestaat niet meer.')
+        const update = db.prepare('UPDATE group_states SET data = ?, revision = revision + 1 WHERE id = ?')
+        for (const group of db.prepare('SELECT id, data FROM group_states').all()) {
+          const state = JSON.parse(group.data)
+          if (Object.hasOwn(state.recipeEdits ?? {}, id) || !state.meals.some(meal => meal.recipeId === id)) continue
+          state.meals = state.meals.filter(meal => meal.recipeId !== id)
+          update.run(JSON.stringify(state), group.id)
+        }
+        return
+      }
+      const before = { approved: 'pending', restored: 'archived', rejected: 'pending', archived: 'approved' }[status]
+      if (!['approved', 'restored', 'rejected', 'archived'].includes(status) || !db.prepare(
         'UPDATE recipe_publications SET status = ? WHERE id = ? AND status = ?',
-      ).run(status, id, before).changes) throw new InputError('De publicatiestatus is inmiddels gewijzigd.')
+      ).run(status === 'restored' ? 'approved' : status, id, before).changes) throw new InputError('De publicatiestatus is inmiddels gewijzigd.')
     },
   }
 }

@@ -236,16 +236,25 @@ export function createAuth(store, mail = sendMail) {
         return moderation.review(body.id)
       case 'publication-decide':
         requireSuperuser(current)
-        moderation.decide(body)
+        moderation.bulkDecide(body.ids ?? [body.id], body.status)
         return { message: 'Publicatiestatus opgeslagen.' }
       case 'ingredient-code-suggest':
         requireSuperuser(current)
-        return moderation.suggestIngredientCode(body.name, body.id)
+        return moderation.suggestIngredientCode(body.name, body.id, body.reserved)
       case 'ingredient-edit':
         requireSuperuser(current)
         if (typeof body.id !== 'string' || (body.groupId !== undefined && typeof body.groupId !== 'string')) throw new InputError('Kies een ingrediënt.')
         moderation.editIngredient(body)
         return { message: 'Ingrediënt opgeslagen.' }
+      case 'terms-publish': {
+        requireSuperuser(current)
+        if (!Array.isArray(body.terms) || !body.terms.length || body.terms.length > 20 ||
+            body.terms.some(term => !term || typeof term !== 'object')) throw new InputError('Selecteer één tot twintig termen.')
+        store.transaction(() => {
+          for (const term of body.terms) moderation.publishTerm(term)
+        })
+        return { message: body.terms.length + ' termen gepubliceerd.' }
+      }
       case 'term-publish':
         requireSuperuser(current)
         moderation.publishTerm(body)

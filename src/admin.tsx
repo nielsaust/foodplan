@@ -1,13 +1,14 @@
+import { Icon } from './visuals'
+import { nameKey, publicBaseTerms } from '../domain/terms'
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
-import { ingredientAmount } from '../domain/planning'
 import type { Ingredient, Recipe } from '../domain/catalog'
 
 type ManagedAccount = { id: string; name: string; email: string; groupId: string; role: string; created: number | null; blocked: number; superuser: number; granted: number }
 type ManagedGroup = { id: string; name: string; members: number; created: number | null; blocked: number }
 type Publication = { id: string; title: string; groupName: string; status: 'pending' | 'approved' | 'rejected' | 'archived'; created: number }
 type PendingTerm = { id: string; groupId: string; groupName: string; kind: 'ingredient' | 'tag'; name: string; unit?: string; code?: string }
-type Review = { recipe: Recipe; ingredients: Record<string, Ingredient> }
+export type Review = { recipe: Recipe; ingredients: Record<string, Ingredient> }
 type Overview = { accounts: ManagedAccount[]; groups: ManagedGroup[]; publications: Publication[]; terms: PendingTerm[]; publicIngredients: Ingredient[] }
 const sections = {
   transfer: { title: 'Publieke recepten overzetten', description: 'Importeer of exporteer recepten via een JSON-bestand.' },
@@ -30,7 +31,7 @@ async function adminRequest<T>(route: string, body: Record<string, unknown> = {}
   return result as T
 }
 
-export function AdminPage({ accountId, groupId }: { accountId: string; groupId: string }) {
+export function AdminPage({ accountId, groupId, openRecipe, revision }: { revision: number; accountId: string; groupId: string; openRecipe: (review: Review, status: Publication["status"]) => void }) {
   const [section, setSection] = useState<Section>()
   const heading = useRef<HTMLHeadingElement>(null)
   function navigate(next?: Section) {
@@ -48,9 +49,9 @@ export function AdminPage({ accountId, groupId }: { accountId: string; groupId: 
   const [importIds, setImportIds] = useState<string[]>([])
   const toggle = (ids: string[], id: string) => ids.includes(id) ? ids.filter(key => key !== id) : [...ids, id]
   const [overview, setOverview] = useState<Overview>()
-  const [preview, setReview] = useState<Review>()
-  const review = preview?.recipe
-  const ingredients = preview?.ingredients ?? {}
+  const [recipeStatus, setRecipeStatus] = useState('')
+  const [recipeSearch, setRecipeSearch] = useState('')
+  const [selectedRecipes, setSelectedRecipes] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
@@ -60,7 +61,7 @@ export function AdminPage({ accountId, groupId }: { accountId: string; groupId: 
     setCatalog((await response.json()).recipes)
     setOverview(next)
   }
-  useEffect(() => { void load().catch(failure => setError(failure.message)) }, [])
+  useEffect(() => { void load().catch(failure => setError(failure.message)) }, [revision])
   async function execute(work: () => Promise<void>) {
     setBusy(true)
     setError('')
@@ -79,6 +80,23 @@ export function AdminPage({ accountId, groupId }: { accountId: string; groupId: 
   function form(event: FormEvent<HTMLFormElement>, route: string, extras: Record<string, unknown> = {}) {
     event.preventDefault()
     void change(route, { ...Object.fromEntries(new FormData(event.currentTarget)), ...extras })
+  }
+  const visible = (overview?.publications ?? []).filter(item =>
+    (!recipeStatus || item.status === recipeStatus) && item.title.toLocaleLowerCase('nl').includes(recipeSearch.trim().toLocaleLowerCase('nl')))
+  const selection = visible.filter(item => selectedRecipes.includes(item.id))
+  const actions = [
+    { status: 'approved', label: 'Goedkeuren' }, { status: 'rejected', label: 'Afwijzen' },
+    { status: 'archived', label: 'Verbergen' }, { status: 'restored', label: 'Opnieuw publiceren' },
+    { status: 'deleted', label: 'Definitief verwijderen' },
+  ]
+  function allowed(item: Publication, status: string) {
+    return status === 'deleted' || (item.status === 'pending' && ['approved', 'rejected'].includes(status)) ||
+      (item.status === 'approved' && status === 'archived') || (item.status === 'archived' && status === 'restored')
+  }
+  function decide(ids: string[], status: string) {
+    if (status === 'deleted' && !window.confirm('Definitief verwijderen? Deze recepten verdwijnen ook uit alle planningen waarin ze rechtstreeks zijn ingepland.')) return
+    if (status === 'archived' && !window.confirm('Verbergen? Geplande maaltijden blijven staan. Opnieuw inplannen kan via een privékopie.')) return
+    void change('publication-decide', { ids, status })
   }
   const pending = overview?.publications.filter(item => item.status === 'pending').length ?? 0
   const newTerms = overview?.terms?.length ?? 0
@@ -142,49 +160,44 @@ export function AdminPage({ accountId, groupId }: { accountId: string; groupId: 
       </label>)}
       <button className="button primary" disabled={busy || !importIds.length} onClick={() => void change('catalog-import', { bundle, ids: importIds })}>Importeer geselecteerde recepten</button>
     </section>
-      <section className="panel people-panel" hidden={section !== "publications"}>
-
-        {!overview?.publications.length && <p>Geen publicaties.</p>}
-        {overview?.publications.map(item => <article className="admin-row" key={item.id}>
-          <strong>{item.title}</strong><p>{item.groupName} · {statuses[item.status]} · {dateLabel(item.created)}</p>
-          <button className="button" disabled={busy} onClick={() => void execute(async () => {
-            if (review?.id === item.id) setReview(undefined)
-            else setReview(await adminRequest<Review>('publication-review', { id: item.id }))
-          })}>{review?.id === item.id ? 'Voorbeeld sluiten' : 'Recept bekijken'}</button>
-          {review?.id === item.id && <div className="admin-review">
-            {review.image && <img className="recipe-upload-preview" src={review.image} alt="Receptafbeelding"/>}
-            <p>{review.subtitle} · {review.cuisine} · {review.minutes} min</p>
-            <p>{review.description}</p>
-            {review.source === null && <p>Origineel recept</p>}
-            {review.source && <p>Bron: <a href={review.source} target="_blank" rel="noreferrer">{review.source}</a></p>}<p>{review.tags.join(' · ')}</p>
-            <ul>{Object.entries(review.amounts).map(([id, value]) => <li key={id}>{ingredientAmount(value, ingredients[id].unit)} {ingredients[id].name}</li>)}</ul>
-            <ol>{review.steps.map((step, index) => <li key={index}>{step.replace(/\{([^}:]+)(?::([^}]+))?\}/g, (_, id: string, fraction: string | undefined) =>
-              ingredientAmount(review.amounts[id] * Number(fraction ?? 1), ingredients[id].unit) + ' ' + ingredients[id].name.toLocaleLowerCase('nl'))}</li>)}</ol>
-            {item.status === 'pending' && <div className="form-row">
-              <button className="button primary" disabled={busy} onClick={() => void change('publication-decide', { id: item.id, status: 'approved' })}>Goedkeuren</button>
-              <button className="button danger" disabled={busy} onClick={() => void change('publication-decide', { id: item.id, status: 'rejected' })}>Afwijzen</button>
-            </div>}
-            {item.status === 'approved' && <button className="button danger" disabled={busy} onClick={() => void change('publication-decide', { id: item.id, status: 'archived' })}>Verbergen</button>}
-          </div>}
-        </article>)}
+      <section className="panel recipe-management" hidden={section !== "publications"}>
+        <div className="form-row">
+          <label>Zoek op receptnaam<input value={recipeSearch} onChange={event => { setRecipeSearch(event.target.value); setSelectedRecipes([]) }}/></label>
+          <label>Status<select value={recipeStatus} onChange={event => { setRecipeStatus(event.target.value); setSelectedRecipes([]) }}>
+            <option value="">Alle statussen</option>
+            {Object.entries(statuses).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+          </select></label>
+        </div>
+        {!!selection.length && <div className="form-row admin-bulk">
+          <strong className="admin-selection-count">{selection.length} geselecteerd</strong>
+          {actions.filter(action => selection.every(item => allowed(item, action.status))).map(action =>
+            <button className="button" key={action.status} disabled={busy} onClick={() => decide(selection.map(item => item.id), action.status)}>{action.label}</button>)}
+        </div>}
+        <div className="recipe-table-wrap"><table className="recipe-table">
+          <thead><tr>
+            <th><input type="checkbox" aria-label="Alle getoonde recepten selecteren" disabled={!visible.length || busy}
+              checked={visible.length > 0 && selection.length === visible.length}
+              onChange={event => setSelectedRecipes(event.target.checked ? visible.map(item => item.id) : [])}/></th>
+            <th scope="col">Recept</th><th scope="col">Status</th><th scope="col">Acties</th>
+          </tr></thead>
+          <tbody>{visible.map(item => <tr key={item.id}>
+            <td><input type="checkbox" aria-label={item.title + ' selecteren'} checked={selectedRecipes.includes(item.id)} disabled={busy}
+              onChange={() => setSelectedRecipes(toggle(selectedRecipes, item.id))}/></td>
+            <td><button className="button text" disabled={busy} onClick={() => void execute(async () => {
+              openRecipe(await adminRequest<Review>('publication-review', { id: item.id }), item.status)
+            })}>{item.title}</button><small>{item.created ? item.groupName + ' · ' + dateLabel(item.created) : 'Startrecept'}</small></td>
+            <td>{statuses[item.status]}</td>
+            <td><div className="form-row">{actions.filter(action => allowed(item, action.status)).map(action =>
+              <button className={'button' + (action.status === 'deleted' ? ' danger' : '')} key={action.status} disabled={busy}
+                onClick={() => decide([item.id], action.status)}>{action.label}</button>)}</div></td>
+          </tr>)}</tbody>
+        </table></div>
+        {!visible.length && <p>Geen recepten gevonden.</p>}
       </section>
       <section className="panel people-panel" hidden={section !== "terms"}>
 
-        <p>Pas desgewenst de publieke naam aan. Publiceer de gekoppelde termen voordat je een recept goedkeurt.</p>
-        {!overview?.terms?.length && <p>Geen nieuwe termen om te publiceren.</p>}
-        {overview?.terms?.map(term => term.kind === 'ingredient'
-          ? <IngredientAdminForm key={term.groupId + '/' + term.id} term={term} groupId={term.groupId} groupName={term.groupName} busy={busy} change={change}/>
-          : <article className="admin-row" key={term.groupId + '/' + term.id}>
-            <p>Kenmerk · {term.groupName}</p>
-            <form className="form-row" onSubmit={event => form(event, 'term-publish', { groupId: term.groupId, id: term.id, kind: term.kind })}>
-              <label>Publieke naam<input name="name" defaultValue={term.name} required maxLength={40}/></label>
-              <button className="button" disabled={busy}>Publiek maken</button>
-            </form>
-          </article>)}
-        {!!overview?.publicIngredients?.length && <details>
-          <summary>Publieke ingrediënten bewerken</summary>
-          {overview.publicIngredients.map(term => <IngredientAdminForm key={term.id} term={term} busy={busy} change={change}/>)}
-        </details>}
+        <TermManagement pending={overview?.terms ?? []} published={overview?.publicIngredients ?? []}
+          busy={busy} change={change}/>
       </section>
       <section className="panel people-panel" hidden={section !== "accounts"}>
 
@@ -215,36 +228,146 @@ export function AdminPage({ accountId, groupId }: { accountId: string; groupId: 
   </>
 }
 
-function IngredientAdminForm({ term, groupId, groupName, busy, change }: {
-  term: { id: string; name: string; code?: string; unit?: string }; groupId?: string; groupName?: string
-  busy: boolean; change: (route: string, body: Record<string, unknown>) => Promise<void>
+type TermRow = { id: string; name: string; kind: 'ingredient' | 'tag'; groupId?: string; groupName?: string; unit?: string; code?: string; builtin?: boolean }
+type TermDraft = { name: string; code: string }
+
+function TermManagement({ pending, published, busy, change }: {
+  pending: PendingTerm[]; published: Ingredient[]; busy: boolean
+  change: (route: string, body: Record<string, unknown>) => Promise<void>
 }) {
+  const [scope, setScope] = useState<'pending' | 'public'>('pending')
+  const [search, setSearch] = useState('')
+  const [page, setPage] = useState(0)
+  const [selected, setSelected] = useState<string[]>([])
+  const [drafts, setDrafts] = useState<Record<string, TermDraft>>({})
   const [suggesting, setSuggesting] = useState(false)
-  const [error, setError] = useState('')
-  return <article className="admin-row">
-    <p>{groupName ? 'Ingrediënt · ' + groupName : 'Publiek ingrediënt'} · {term.unit}</p>
-    <form className="form-row" onSubmit={event => {
-      event.preventDefault()
-      const publish = (event.nativeEvent as SubmitEvent).submitter?.getAttribute('value') === 'publish'
-      void change(publish ? 'term-publish' : 'ingredient-edit', {
-        ...Object.fromEntries(new FormData(event.currentTarget)), id: term.id, groupId, kind: 'ingredient',
-      })
-    }}>
-      <label>Naam<input name="name" defaultValue={term.name} maxLength={80} required/></label>
-      <label>Ingrediëntcode<input name="code" defaultValue={term.code} pattern="[a-z0-9]+(?:-[a-z0-9]+)*" maxLength={64} placeholder="bijv. spring-onion"/></label>
-      <button type="button" className="button" disabled={busy || suggesting} onClick={async event => {
-        const fields = event.currentTarget.form?.elements
-        const name = fields?.namedItem('name') as HTMLInputElement
-        const code = fields?.namedItem('code') as HTMLInputElement
-        setError('')
-        setSuggesting(true)
-        try { code.value = (await adminRequest<{ code: string }>('ingredient-code-suggest', { name: name.value, id: term.id })).code }
-        catch (failure) { setError(failure instanceof Error ? failure.message : 'Vertalen lukt nu niet.') }
-        finally { setSuggesting(false) }
-      }}>Engelse code voorstellen</button>
-      <button className="button" disabled={busy || suggesting}>Opslaan</button>
-      {groupId && <button className="button" value="publish" disabled={busy || suggesting}>Publiek maken</button>}
-    </form>
-    {error && <p role="alert">{error}</p>}
-  </article>
+  const [notice, setNotice] = useState('')
+  const keyFor = (term: TermRow) => (term.groupId ?? '') + '/' + term.id
+  const draftFor = (term: TermRow) => drafts[keyFor(term)] ?? { name: term.name, code: term.code ?? '' }
+  const payload = (term: TermRow) => ({ id: term.id, groupId: term.groupId, kind: term.kind, ...draftFor(term) })
+  const publicRows: TermRow[] = [
+    ...publicBaseTerms.ingredients.filter(term => !published.some(item => item.id === term.id))
+      .map(term => ({ ...term, code: term.id, builtin: true, kind: 'ingredient' as const })),
+    ...published.map(term => ({ ...term, builtin: publicBaseTerms.ingredients.some(item => item.id === term.id), kind: 'ingredient' as const })),
+  ]
+  const rows: TermRow[] = (scope === 'pending' ? pending : publicRows).filter(term =>
+    [term.name, term.code ?? '', term.groupName ?? ''].some(value => nameKey(value).includes(nameKey(search))))
+    .sort((a, b) => a.name.localeCompare(b.name, 'nl'))
+  const pageSize = 20
+  const pageCount = Math.max(1, Math.ceil(rows.length / pageSize))
+  const currentPage = Math.min(page, pageCount - 1)
+  const pageNumbers = pageCount <= 8
+    ? Array.from({ length: pageCount }, (_, index) => index)
+    : [...new Set([0, 1, 2, 3, 4, currentPage, pageCount - 2, pageCount - 1])].sort((a, b) => a - b)
+
+  function goToPage(next: number) {
+    setPage(next)
+    setSelected([])
+  }
+
+  const visible = rows.slice(currentPage * pageSize, (currentPage + 1) * pageSize)
+  const selectable = visible
+  const picked = selectable.filter(term => selected.includes(keyFor(term)))
+  const allSelected = selectable.length > 0 && picked.length === selectable.length
+  const locked = busy || suggesting
+  const updateDraft = (term: TermRow, fields: Partial<TermDraft>) =>
+    setDrafts(current => ({ ...current, [keyFor(term)]: { ...draftFor(term), ...fields } }))
+
+  async function suggest(terms: TermRow[]) {
+    setSuggesting(true)
+    setNotice('')
+    const reserved: string[] = []
+    const failures: string[] = []
+    for (const term of terms) {
+      const name = draftFor(term).name
+      try {
+        const { code } = await adminRequest<{ code: string }>('ingredient-code-suggest', { name, id: term.id, reserved })
+        reserved.push(code)
+        updateDraft(term, { code })
+      } catch { failures.push(name) }
+    }
+    setNotice(failures.length ? 'Geen voorstel voor ' + failures.join(', ') + '. Je kunt de code zelf invullen.' :
+      reserved.length + (reserved.length === 1 ? ' code voorgesteld.' : ' codes voorgesteld.'))
+    setSuggesting(false)
+  }
+
+  function switchScope(next: typeof scope) {
+    setScope(next)
+    setSearch('')
+    setPage(0)
+    setSelected([])
+    setNotice('')
+  }
+  return <>
+    <div className="form-row">
+      <button className={'button' + (scope === 'pending' ? ' primary' : '')} aria-pressed={scope === 'pending'} disabled={locked}
+        onClick={() => switchScope('pending')}>Goed te keuren <span className="admin-badge">{pending.length}</span></button>
+      <button className={'button' + (scope === 'public' ? ' primary' : '')} aria-pressed={scope === 'public'} disabled={locked}
+        onClick={() => switchScope('public')}>Alle publieke ingrediënten</button>
+    </div>
+    <div className="form-row admin-bulk">
+      <label>Zoeken<input type="search" value={search} disabled={locked} onChange={event => {
+        setSearch(event.target.value)
+        setPage(0)
+        setSelected([])
+      }}/></label>
+      {!!selectable.length && <label className="check-row"><input type="checkbox" checked={allSelected} disabled={locked}
+        onChange={event => setSelected(event.target.checked ? selectable.map(keyFor) : [])}/>Selecteer deze pagina</label>}
+    </div>
+    {!!picked.length && <div className="form-row admin-bulk">
+      <strong className="admin-selection-count">{picked.length} geselecteerd</strong>
+      <button className="button" disabled={locked || !picked.some(term => term.kind === 'ingredient')}
+        onClick={() => void suggest(picked.filter(term => term.kind === 'ingredient'))}>Engelse codes voorstellen</button>
+      {scope === 'pending' && <button className="button primary" disabled={locked}
+        onClick={() => void change('terms-publish', { terms: picked.map(payload) })}>Selectie publiek maken</button>}
+    </div>}
+    {suggesting && <p role="status">Engelse codes ophalen…</p>}
+    {notice && <p role="status">{notice}</p>}
+    {!visible.length && <div className="term-empty" role="status">
+      <span className="term-empty-icon"><Icon name={search.trim() ? 'search' : 'check'}/></span>
+      <strong>{search.trim() ? 'Geen resultaten gevonden' : scope === 'pending' ? 'Alles bijgewerkt' : 'Nog geen publieke ingrediënten'}</strong>
+      {search.trim() ? <button className="button" disabled={locked} onClick={() => {
+        setSearch('')
+        goToPage(0)
+      }}>Wis zoekopdracht</button>
+        : scope === 'pending' && <p>Er wachten geen ingrediënten of kenmerken op goedkeuring.</p>}
+    </div>}
+    {visible.map(term => {
+      const key = keyFor(term)
+      const draft = draftFor(term)
+      return <article className="admin-row term-admin-row" key={key}>
+        <input type="checkbox" aria-label={term.name + ' selecteren'} checked={selected.includes(key)} disabled={locked}
+          onChange={event => setSelected(current => event.target.checked ? [...current, key] : current.filter(id => id !== key))}/>
+        <div>
+          <small>{term.builtin ? 'Standaard' : term.groupName ?? 'Publiek'} · {term.unit ?? 'Kenmerk'}</small>
+          <form className="form-row term-admin-fields" onSubmit={event => {
+            event.preventDefault()
+            const publish = (event.nativeEvent as SubmitEvent).submitter?.getAttribute('value') === 'publish'
+            void change(publish ? 'term-publish' : 'ingredient-edit', payload(term))
+          }}>
+            <label>Naam<input required maxLength={term.kind === 'tag' ? 40 : 80} value={draft.name}
+              disabled={locked} onChange={event => updateDraft(term, { name: event.target.value })}/></label>
+            {term.kind === 'ingredient' && <label>Code<input maxLength={64} pattern="[a-z0-9]+(?:-[a-z0-9]+)*" value={draft.code}
+              disabled={locked} onChange={event => updateDraft(term, { code: event.target.value })}/></label>}
+            {term.kind === 'ingredient' && <>
+              <button type="button" className="icon-button" title="Engelse code voorstellen" aria-label={'Engelse code voorstellen voor ' + term.name}
+                disabled={locked} onClick={() => void suggest([term])}><Icon name="generate"/></button>
+              <button className="button" disabled={locked}>Opslaan</button>
+            </>}
+            {term.groupId && <button className="button" value="publish" disabled={locked}>Publiek maken</button>}
+          </form>
+        </div>
+      </article>
+    })}
+    {pageCount > 1 && <div className="term-pagination" role="navigation" aria-label="Pagina’s ingrediënten en kenmerken">
+      <button className="icon-button" aria-label="Vorige pagina" disabled={locked || !currentPage} onClick={() => goToPage(currentPage - 1)}><Icon name="left"/></button>
+      {pageNumbers.map((number, index) => <span className="term-page" key={number}>
+        {index > 0 && number > pageNumbers[index - 1] + 1 && <span aria-hidden="true">…</span>}
+        <button className={'button' + (number === currentPage ? ' primary' : '')}
+          aria-label={'Pagina ' + (number + 1)} aria-current={number === currentPage ? 'page' : undefined}
+          disabled={locked} onClick={() => { if (number !== currentPage) goToPage(number) }}>{number + 1}</button>
+      </span>)}
+      <button className="icon-button" aria-label="Volgende pagina" disabled={locked || currentPage + 1 === pageCount} onClick={() => goToPage(currentPage + 1)}><Icon name="right"/></button>
+    </div>}
+  </>
 }

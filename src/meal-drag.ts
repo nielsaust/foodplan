@@ -7,8 +7,15 @@ export function useMealDrag(move: (from: string, to: string) => void) {
   const [drag, setDrag] = useState<Drag>()
   const gesture = useRef<{ timer: number; pointer: number; x: number; y: number; held: boolean } | undefined>(undefined)
   const suppressClick = useRef(false)
-  const targetDate = (event: PointerEvent) =>
-    document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-meal-date]')?.dataset.mealDate
+  function targetDate(event: PointerEvent) {
+    const row = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-meal-date]')
+    if (!row) return
+    const bounds = row.getBoundingClientRect()
+    if (row.dataset.occupied && event.clientY > bounds.top + bounds.height / 2) {
+      return (row.nextElementSibling as HTMLElement | null)?.dataset.mealDate ?? row.dataset.after
+    }
+    return row.dataset.mealDate
+  }
 
   function clear() {
     window.clearTimeout(gesture.current?.timer)
@@ -18,14 +25,14 @@ export function useMealDrag(move: (from: string, to: string) => void) {
 
   useEffect(() => () => window.clearTimeout(gesture.current?.timer), [])
 
-  function handlers(from: string, open: () => void) {
+  function handlers(from: string) {
     return {
-      onPointerDown(event: PointerEvent<HTMLButtonElement>) {
+      onPointerDown(event: PointerEvent<HTMLDivElement>) {
         if (!event.isPrimary || event.button !== 0) return
-        const { clientX: x, clientY: y, pointerId: pointer, currentTarget } = event
+        const { clientX: x, clientY: y, pointerId: pointer, target } = event
         suppressClick.current = false
         clear()
-        currentTarget.setPointerCapture(pointer)
+        if (target instanceof Element) target.setPointerCapture(pointer)
         const timer = window.setTimeout(() => {
           if (!gesture.current) return
           gesture.current.held = true
@@ -34,7 +41,7 @@ export function useMealDrag(move: (from: string, to: string) => void) {
         }, 350)
         gesture.current = { timer, pointer, x, y, held: false }
       },
-      onPointerMove(event: PointerEvent<HTMLButtonElement>) {
+      onPointerMove(event: PointerEvent<HTMLDivElement>) {
         const current = gesture.current
         if (current?.pointer !== event.pointerId) return
         if (current.held) setDrag({ from, to: targetDate(event) })
@@ -43,7 +50,7 @@ export function useMealDrag(move: (from: string, to: string) => void) {
           clear()
         }
       },
-      onPointerUp(event: PointerEvent<HTMLButtonElement>) {
+      onPointerUp(event: PointerEvent<HTMLDivElement>) {
         if (gesture.current?.pointer !== event.pointerId) return
         const to = gesture.current.held && targetDate(event)
         clear()
@@ -52,8 +59,11 @@ export function useMealDrag(move: (from: string, to: string) => void) {
       onPointerCancel: clear,
       onLostPointerCapture: clear,
       onContextMenu: (event: MouseEvent) => event.preventDefault(),
-      onClick(event: MouseEvent) {
-        if (event.detail === 0 || !suppressClick.current) open()
+      onClickCapture(event: MouseEvent) {
+        if (event.detail !== 0 && suppressClick.current) {
+          event.preventDefault()
+          event.stopPropagation()
+        }
         suppressClick.current = false
       },
     }

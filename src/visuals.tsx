@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 
 const paths: Record<string, ReactNode> = {
   settings: <><path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1m0-12.8-2.1 2.1m-8.6 8.6-2.1 2.1"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></>,
+  generate: <path d="M12 3l2.2 6.8L21 12l-6.8 2.2L12 21l-2.2-6.8L3 12l6.8-2.2L12 3ZM20 2v4m-2-2h4"/>,
   filter: <><path d="M4 7h16M7 12h10m-7 5h4"/><circle cx="8" cy="7" r="2" fill="var(--paper)"/><circle cx="15" cy="12" r="2" fill="var(--paper)"/></>,
   edit: <path d="m14 6 4 4M4 20l4-1 12-12-4-4L4 15v5Z"/>,
   leaf: <><path d="M19 4c-8 0-13 3-13 9a5 5 0 0 0 5 5c6 0 8-6 8-14Z"/><path d="M4 20 15 9"/></>,
