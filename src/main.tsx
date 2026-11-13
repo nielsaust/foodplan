@@ -1,3 +1,4 @@
+import type { RefObject } from 'react'
 import { FileUpload } from './file-upload'
 import { cookingPortions } from '../domain/planning'
 import { pagePaths, pageFromPath, adminSections } from '../domain/navigation'
@@ -425,14 +426,21 @@ function RecipeGrid({ recipes, onOpen, disabled, onAdd, collectionBadge }: { col
   </>
 }
 
-function DayMealPicker({ date, state, recipes, busy, save, openRecipe }: {
-  date: string; state: State; recipes: Recipe[]; busy: boolean; save: (action: Action) => Promise<boolean>; openRecipe: (recipe: Recipe, date?: string) => void
+function DayMealPicker({ date, state, recipes, busy, save, openRecipe, beforeDone }: {
+  date: string; state: State; recipes: Recipe[]; busy: boolean; save: (action: Action) => Promise<boolean>; openRecipe: (recipe: Recipe, date?: string) => void; beforeDone: RefObject<(() => Promise<boolean>) | null>
 }) {
   const meal = state.meals.find(item => item.date === date)
   const currentRecipe = meal ? householdRecipes(state)[meal.recipeId] : undefined
   const [editing, setEditing] = useState(!meal)
   const [mode, setMode] = useState(meal?.leftoverOf ? 'leftover' : meal?.text ? 'text' : 'recipe')
   const [text, setText] = useState(meal?.text ?? '')
+  useEffect(() => {
+    beforeDone.current = async () => {
+      if (mode !== 'text' || !editing || !text.trim() || text.trim() === meal?.text) return true
+      return save({ type: 'meal', date, recipeId: null, text: text.trim() })
+    }
+    return () => { beforeDone.current = null }
+  }, [beforeDone, mode, editing, text, meal?.text, date, save])
   async function choose(recipeId: string | null, text?: string) {
     if (await save({ type: 'meal', date, recipeId, ...(text === undefined ? {} : { text }) })) setEditing(recipeId === null && text === undefined)
   }
@@ -470,9 +478,9 @@ function DayMealPicker({ date, state, recipes, busy, save, openRecipe }: {
           void choose(null, text)
         }}>
           <label>Wat staat er gepland?
-            <input required maxLength={160} value={text} disabled={busy} placeholder="Bijv. uit eten of eten bestellen" onChange={event => setText(event.target.value)}/>
+            <span className="day-text-input-group"><input required maxLength={160} value={text} disabled={busy} placeholder="Bijv. uit eten of eten bestellen" onChange={event => setText(event.target.value)}/>
+            <button type="submit" className="button" aria-label="Planning opslaan" title="Planning opslaan" disabled={busy || !text.trim()}><Icon name="save"/></button></span>
           </label>
-          <button className="button primary" disabled={busy || !text.trim()}>Planning opslaan</button>
         </form>}
     </div>}
   </section>
@@ -734,6 +742,7 @@ function Profile({ account, person, close, unitSystem, setUnitSystem, diet, setD
 
 function App({ account, onExpired }: { account: Account; onExpired: () => void }) {
   const { state, save, restore, error, setError, busy } = useHousehold(onExpired)
+  const dayBeforeDone = useRef<(() => Promise<boolean>) | null>(null)
   const [signingOut, setSigningOut] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
   const [addPersonOpen, setAddPersonOpen] = useState(false)
@@ -1036,7 +1045,7 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
         </label>)}</div>
         {!state.people.length && <button className="button" onClick={() => { close(); navigate('huisgenoten') }}>Huisgenoot toevoegen</button>}
         </section>
-        <DayMealPicker openRecipe={openRecipe} key={modal.date} date={modal.date} state={state} recipes={recipes} busy={busy} save={save}/>
+        <DayMealPicker beforeDone={dayBeforeDone} openRecipe={openRecipe} key={modal.date} date={modal.date} state={state} recipes={recipes} busy={busy} save={save}/>
         {dayMeal && (dayMeal.text || canScheduleRecipe(state, dayMeal.recipeId)) && <details className="day-move"><summary>Planning verplaatsen</summary><form className="form-row" onSubmit={event => {
           event.preventDefault()
           const destination = String(new FormData(event.currentTarget).get('destination') || '')
@@ -1046,7 +1055,7 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
           <label>Verplaatsen naar<input type="date" name="destination" required/></label>
           <button className="button" disabled={busy}>Maaltijd verplaatsen</button>
         </form></details>}
-        <div className="day-done"><button className="button primary" onClick={close}>Klaar <Icon name="check" size={17}/></button></div>
+        <div className="day-done"><button className="button primary" disabled={busy} onClick={async () => { if (!dayBeforeDone.current || await dayBeforeDone.current()) close() }}>Klaar <Icon name="check" size={17}/></button></div>
       </div>}
     </Dialog>}
   </>
