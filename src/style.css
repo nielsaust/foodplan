@@ -780,3 +780,6 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .accounts-heading { margin-bottom: 12px; }
 .admin-account-actions { align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
 .admin-account-actions p { margin: 0; color: var(--muted); }
+
+.guests.guests-partial { background: #f7ecdb; color: #785222; font-weight: 700; padding: 6px; }
+.guests.guests-partial:hover { background: #efdfc5; color: #604017; }

@@ -885,7 +885,7 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
                 : meal?.text ? <button className="meal-title" disabled={busy} onClick={() => openDay(date)}><strong>{meal.text}</strong></button>
                 : <button className="add-meal" onClick={() => openDay(date)}><Icon name="plus" size={17}/> Maaltijd plannen</button>}
               {date === current && <span className="today-pill">Vandaag</span>}
-              <button className="guests" onClick={() => openDay(date)} aria-label={'Mee-eters op ' + formatLong(date)}><Icon name="people" size={17}/><span>{guests.length} <span className="guest-label">mee</span></span></button>
+              <button className={'guests' + (guests.length !== state.people.length ? ' guests-partial' : '')} onClick={() => openDay(date)} title={guests.length + ' van ' + state.people.length + ' huisgenoten eten mee'} aria-label={'Mee-eters op ' + formatLong(date) + ': ' + guests.length + ' van ' + state.people.length + ' huisgenoten'}><Icon name={guests.length !== state.people.length ? 'person-minus' : 'people'} size={17}/><span>{guests.length} <span className="guest-label">mee</span></span></button>
               <button className="icon-button day-more" aria-label={'Bewerk ' + formatLong(date)} onClick={() => openDay(date)}><Icon name="dots" size={18}/></button>
             </div>
           })}</div>
