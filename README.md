@@ -95,7 +95,37 @@ Start in een tweede terminal `npm run dev` en open de URL die Vite toont. Vite s
 
 Huisgenoten hebben een handmatig instelbare portiefactor. De boodschappenlijst telt hoeveelheden uit geplande recepten samen voor de gekozen periode, vermeldt de gebruiksdatums en markeert indicatief wanneer je kort houdbare ingrediënten beter later kunt kopen. Losse boodschappen zijn gedeeld over alle periodes. Vinkjes voor receptingrediënten blijven gekoppeld aan dezelfde gebruiksdatums en hoeveelheden.
 
-Caloriegestuurde porties, accountbeheer, offline synchronisatie en receptenimport vallen buiten deze eerste versie.
+Offline synchronisatie wordt nog niet ondersteund.
+
+## Recept toevoegen met een agent
+
+Onder **Huishouden → Recept toevoegen met Claude of Codex** kan ieder ingelogd
+huishoudlid een tijdelijke instructie maken. Kopieer deze naar de agent en voeg
+een receptlink of omschrijving toe. De instructie bevat het JSON-formaat, de
+verplichte gegevens, regels voor doorvragen en het exacte vervaltijdstip.
+
+- `POST /api/recipe-import-links` met een ingelogde sessie en JSON `{}` maakt een
+  code die 15 minuten geldig is. Het antwoord bevat `path` en `expiresAt` (UTC).
+  Een nieuwe code vervangt de vorige code van hetzelfde account en huishouden.
+- `POST /api/recipe-import?code=…` met `Content-Type: application/json` voegt zonder
+  sessie één privérecept toe. De code bepaalt het huishouden; de agent kan geen
+  ander huishouden kiezen of bestaande recepten aanpassen. Deel de link alleen
+  met de bedoelde agent; de query bevat een geheim (vermijd logging van deze query
+  in infrastructuur). De database bewaart alleen een hash van de code.
+- Het invoerformaat en een compleet voorbeeld staan in `domain/recipe-import.ts`.
+  Ingrediënthoeveelheden gelden voor `servings`; opslag gebeurt per portie.
+  Voedingswaarden zijn al per portie. De backend hergebruikt bestaande ingrediënten
+  en kenmerken en zet compatibele eenheden om. Onverenigbare eenheden geven een
+  fout met de verwachte eenheid.
+- Succes geeft HTTP 201 met `recipe: { id, title }`. Receptopslag en verbruik van
+  de code gebeuren in één transactie. HTTP 400 laat de code beschikbaar voor een
+  gecorrigeerd verzoek. Verlopen, vervangen of gebruikte codes geven HTTP 401;
+  onjuist contenttype 415, te grote verzoeken 413 (maximaal 256 KiB).
+- Geblokkeerde accounts/groepen en verwijderde lidmaatschappen kunnen de code
+  niet meer gebruiken. De server haalt geen receptlinks op; de agent levert JSON.
+
+Controleer de import met Node.js 22.13 of nieuwer:
+`node --experimental-strip-types --test server/recipe-import.test.mjs`.
 
 Nieuwe ingrediënten en kenmerken worden bij het opslaan van een recept toegevoegd aan
 de eigen groep. Een superuser kan ze onder **Beheer** publiceren. Publiceer eerst de

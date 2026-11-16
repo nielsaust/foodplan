@@ -21,6 +21,12 @@ const units = {
 
 export const unitChoices = Object.entries(units).map(([id, [, , label]]) => ({ id, label }))
 export const isUnit = (value: string): value is keyof typeof units => Object.hasOwn(units, value)
+export function quantityInUnit(value: number, from: string, to: string): number | undefined {
+  if (!isUnit(from) || !isUnit(to)) return undefined
+  if (from === to) return value
+  if (units[from][0] !== units[to][0] || units[from][0] === 'count') return undefined
+  return value * units[from][1] / units[to][1]
+}
 const metric = new Set(['g', 'kg', 'ml', 'l', 'tl', 'el', 'cm'])
 const spoons: Record<string, keyof typeof units> = { tl: 'tsp', el: 'tbsp', tsp: 'tl', tbsp: 'el' }
 

@@ -396,15 +396,23 @@ export function openStore(file) {
     }
     return terms
   }
+  let transactionDepth = 0
   function transaction(callback) {
-    db.exec('BEGIN IMMEDIATE')
+    const savepoint = transactionDepth ? 'nested_' + transactionDepth : null
+    db.exec(savepoint ? `SAVEPOINT ${savepoint}` : 'BEGIN IMMEDIATE')
+    transactionDepth++
     try {
       const result = callback()
-      db.exec('COMMIT')
+      db.exec(savepoint ? `RELEASE ${savepoint}` : 'COMMIT')
       return result
     } catch (error) {
-      db.exec('ROLLBACK')
+      if (savepoint) {
+        db.exec(`ROLLBACK TO ${savepoint}`)
+        db.exec(`RELEASE ${savepoint}`)
+      } else db.exec('ROLLBACK')
       throw error
+    } finally {
+      transactionDepth--
     }
   }
   const legacyGroupId = 'household-1'

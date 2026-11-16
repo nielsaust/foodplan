@@ -6,9 +6,11 @@ import { today } from '../domain/planning.ts'
 import { receiveDeployWebhook } from './deploy-webhook.mjs'
 import { AuthError, createAuth, requireOwner } from './auth.mjs'
 import { InputError, openStore } from './store.mjs'
+import { createRecipeImport } from './recipe-import.mjs'
 
 const store = openStore(process.env.DATABASE_PATH || 'data/aan-tafel.sqlite')
 const auth = createAuth(store)
+const recipeImport = createRecipeImport(store)
 function groupSnapshot(groupId, snapshot = store.read(groupId)) {
   return { ...snapshot, state: { ...store.withCatalog(snapshot.state), linkedPeople: auth.linkedPeople(groupId), ownerPeople: auth.ownerPeople(groupId) } }
 }
@@ -22,6 +24,27 @@ const json = (response, status, data, headers = {}) => {
 const server = createServer(async (request, response) => {
   try {
     const path = new URL(request.url, 'http://localhost').pathname
+    if (path === '/api/recipe-import' || path === '/api/recipe-import-links') {
+      if (request.method !== 'POST') return json(response, 405, { error: 'Gebruik POST met een JSON-recept.' }, { Allow: 'POST' })
+      const creating = path === '/api/recipe-import-links'
+      const account = creating ? auth.session(request) : undefined
+      if (creating && !account) throw new AuthError(401, 'Log in om een importlink te maken.')
+      const code = new URL(request.url, 'http://localhost').searchParams.get('code')
+      if (!creating) recipeImport.requireActive(code)
+      if (request.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/json' || request.headers['sec-fetch-site'] === 'cross-site') {
+        return json(response, 415, { error: 'Verstuur het verzoek met Content-Type: application/json.' })
+      }
+      const parts = []
+      let size = 0
+      for await (const part of request) {
+        size += part.length
+        if (size > (creating ? 8192 : 256 * 1024)) return json(response, 413, { error: 'Dit verzoek is te groot.' })
+        parts.push(part)
+      }
+      let data
+      try { data = JSON.parse(Buffer.concat(parts).toString('utf8')) } catch { throw new InputError('Ongeldige JSON. Stuur één JSON-object volgens de instructie.') }
+      return json(response, 201, creating ? recipeImport.create(account) : recipeImport.receive(code, data))
+    }
     if (path === '/api/deploy' && request.method === 'POST') {
       return await receiveDeployWebhook(request, (status, data) => json(response, status, data))
     }

@@ -20,6 +20,7 @@ import type { Account } from './account'
 import { AdminPage } from './admin'
 import { nutrition } from '../domain/nutrition'
 import { RecipeEditor } from './recipe-editor'
+import { RecipeImport } from './recipe-import'
 import { useMealDrag } from './meal-drag'
 import './style.css'
 
@@ -952,6 +953,7 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
           </article>)}
           {!state.people.length && <p>Er zijn nog geen huisgenoten.</p>}
         </section>
+        <RecipeImport key={account.groupId}/>
       </>}
       {tab === 'beheer' && account.superuser && <AdminPage revision={adminRevision} accountId={account.id} groupId={account.groupId} openRecipe={(review, status) => setModal({
         kind: 'recipe', id: review.recipe.id, publicRecipe: review.recipe, reviewIngredients: review.ingredients, reviewStatus: status,
