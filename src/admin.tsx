@@ -300,6 +300,7 @@ function TermManagement({ pending, published, categories, retiredIds, openCatego
 }) {
   const [scope, setScope] = useState<'pending' | 'public'>('pending')
   const [search, setSearch] = useState('')
+  const [categoryFilter, setCategoryFilter] = useState<string>()
   const [page, setPage] = useState(0)
   const [selected, setSelected] = useState<string[]>([])
   const [drafts, setDrafts] = useState<Record<string, TermDraft>>({})
@@ -315,6 +316,7 @@ function TermManagement({ pending, published, categories, retiredIds, openCatego
     ...published.map(term => ({ ...term, builtin: publicBaseTerms.ingredients.some(item => item.id === term.id), kind: 'ingredient' as const })),
   ]
   const rows: TermRow[] = (scope === 'pending' ? pending : publicRows).filter(term =>
+    (categoryFilter === undefined || (term.kind === 'ingredient' && (term.group ?? 'Overige ingrediënten') === categoryFilter)) &&
     [term.name, term.code ?? '', term.groupName ?? ''].some(value => nameKey(value).includes(nameKey(search))))
     .sort((a, b) => a.name.localeCompare(b.name, 'nl'))
   const pageSize = 20
@@ -358,6 +360,7 @@ function TermManagement({ pending, published, categories, retiredIds, openCatego
   function switchScope(next: typeof scope) {
     setScope(next)
     setSearch('')
+    setCategoryFilter(undefined)
     setPage(0)
     setSelected([])
     setNotice('')
@@ -376,6 +379,15 @@ function TermManagement({ pending, published, categories, retiredIds, openCatego
         setPage(0)
         setSelected([])
       }}/></label>
+      <label>Filter op categorie<select value={categoryFilter === undefined ? 'all' : 'category:' + categoryFilter} disabled={locked} onChange={event => {
+        setCategoryFilter(event.target.value === 'all' ? undefined : event.target.value.slice(9))
+        setPage(0)
+        setSelected([])
+      }}>
+        <option value="all">Alle categorieën</option>
+        {categories.map(category => <option key={category.name} value={'category:' + category.name}>{category.name}</option>)}
+        <option value="category:">Niet op boodschappenlijst</option>
+      </select></label>
       {!!selectable.length && <label className="check-row"><input type="checkbox" checked={allSelected} disabled={locked}
         onChange={event => setSelected(event.target.checked ? selectable.map(keyFor) : [])}/>Selecteer deze pagina</label>}
     </div>
@@ -389,12 +401,13 @@ function TermManagement({ pending, published, categories, retiredIds, openCatego
     {suggesting && <p role="status">Engelse codes ophalen…</p>}
     {notice && <p role="status">{notice}</p>}
     {!visible.length && <div className="term-empty" role="status">
-      <span className="term-empty-icon"><Icon name={search.trim() ? 'search' : 'check'}/></span>
-      <strong>{search.trim() ? 'Geen resultaten gevonden' : scope === 'pending' ? 'Alles bijgewerkt' : 'Nog geen publieke ingrediënten'}</strong>
-      {search.trim() ? <button className="button" disabled={locked} onClick={() => {
+      <span className="term-empty-icon"><Icon name={search.trim() || categoryFilter !== undefined ? 'search' : 'check'}/></span>
+      <strong>{search.trim() || categoryFilter !== undefined ? 'Geen resultaten gevonden' : scope === 'pending' ? 'Alles bijgewerkt' : 'Nog geen publieke ingrediënten'}</strong>
+      {search.trim() || categoryFilter !== undefined ? <button className="button" disabled={locked} onClick={() => {
         setSearch('')
+        setCategoryFilter(undefined)
         goToPage(0)
-      }}>Wis zoekopdracht</button>
+      }}>Wis filters</button>
         : scope === 'pending' && <p>Er wachten geen ingrediënten of kenmerken op goedkeuring.</p>}
     </div>}
     {visible.map(term => {
