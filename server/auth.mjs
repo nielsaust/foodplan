@@ -273,6 +273,18 @@ export function createAuth(store, mail = sendMail) {
         if (typeof body.id !== 'string' || (body.groupId !== undefined && typeof body.groupId !== 'string')) throw new InputError('Kies een ingrediënt.')
         moderation.editIngredient(body)
         return { message: 'Ingrediënt opgeslagen.' }
+      case 'ingredients-save': {
+        requireSuperuser(current)
+        if (!Array.isArray(body.ingredients) || !body.ingredients.length || body.ingredients.length > 20 ||
+          body.ingredients.some(item => !item || typeof item.id !== 'string' || (item.groupId !== undefined && typeof item.groupId !== 'string'))) throw new InputError('Selecteer één tot twintig ingrediënten.')
+        store.transaction(() => {
+          for (const ingredient of body.ingredients) moderation.editIngredient(ingredient)
+        })
+        return { message: body.ingredients.length + ' ingrediënten opgeslagen.' }
+      }
+      case 'ingredients-category':
+        requireSuperuser(current)
+        return moderation.assignCategory(body)
       case 'terms-publish': {
         requireSuperuser(current)
         if (!Array.isArray(body.terms) || !body.terms.length || body.terms.length > 20 ||

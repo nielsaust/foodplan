@@ -6,6 +6,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import type { Ingredient, Recipe } from '../domain/catalog'
 import { TermPicker } from './term-picker'
+import { Toast } from './toast'
 import { quantityInUnit } from '../domain/units'
 
 type ManagedAccount = { id: string; name: string; email: string; groupId: string; role: string; created: number | null; blocked: number; superuser: number; granted: number }
@@ -141,7 +142,7 @@ export function AdminPage({ accountId, groupId, openRecipe, revision }: { revisi
       {section !== 'accounts' && <p>{section ? sections[section].description : 'Beheer accounts, groepen en de openbare receptencatalogus.'}</p>}
     </div>
     {error && <p className="alert" role="alert">{error}</p>}
-    {message && <p role="status">{message}</p>}
+    <Toast message={message}/>
     {!section && <div className="admin-dashboard">
       {(Object.keys(sections) as Section[]).map(key => <button className="panel admin-tile" key={key} onClick={() => navigate(key)}>
         <span className="admin-tile-heading">
@@ -238,9 +239,9 @@ export function AdminPage({ accountId, groupId, openRecipe, revision }: { revisi
       {section === "emails" && <EmailManagement/>}
       <section className="panel people-panel" hidden={section !== "terms"}>
 
-        <TermManagement pending={overview?.terms ?? []} published={overview?.publicIngredients ?? []}
+        {section === 'terms' && <TermManagement pending={overview?.terms ?? []} published={overview?.publicIngredients ?? []}
           categories={overview?.categories ?? []} retiredIds={overview?.retiredIngredientIds ?? []} openCategories={() => navigate('categories')}
-          busy={busy} change={change}/>
+          busy={busy} change={change}/>}
       </section>
       {section === 'categories' && <section className="panel people-panel"><div className="form-row"><button className="button" onClick={() => navigate('terms')}>Ingrediënten en kenmerken</button><button className="button primary" aria-pressed="true">Categorieën</button></div>
         <CategoryManagement categories={overview?.categories ?? []} busy={busy} change={change}/></section>}
@@ -250,7 +251,7 @@ export function AdminPage({ accountId, groupId, openRecipe, revision }: { revisi
         <form className="invite-modal-form" onSubmit={event => form(event, 'invite-superuser')}>
           <label>E-mailadres van bestaand account<input type="email" name="email" required maxLength={254}/></label>
           <button className="button primary" disabled={busy}>Uitnodigen</button>
-        </form>{error && <p className="alert" role="alert">{error}</p>}{message && <p role="status">{message}</p>}</div>
+        </form>{error && <p className="alert" role="alert">{error}</p>}</div>
       </dialog>}
       <section className="panel people-panel accounts-panel" hidden={section !== "accounts"}>
 
@@ -298,9 +299,11 @@ function TermManagement({ pending, published, categories, retiredIds, openCatego
   categories: IngredientCategory[]; retiredIds: string[]; openCategories: () => void
   change: (route: string, body: Record<string, unknown>) => Promise<void>
 }) {
-  const [scope, setScope] = useState<'pending' | 'public'>('pending')
+  const [scope, setScope] = useState<'pending' | 'public' | 'all'>(() => new URLSearchParams(window.location.search).get('scope') === 'all' ? 'all' : 'pending')
   const [search, setSearch] = useState('')
-  const [categoryFilter, setCategoryFilter] = useState<string>()
+  const [categoryFilter, setCategoryFilter] = useState<string | undefined>(() => new URLSearchParams(window.location.search).get('category') ?? undefined)
+  const [bulkCategory, setBulkCategory] = useState('')
+  const [withoutCode, setWithoutCode] = useState(false)
   const [page, setPage] = useState(0)
   const [selected, setSelected] = useState<string[]>([])
   const [drafts, setDrafts] = useState<Record<string, TermDraft>>({})
@@ -315,7 +318,8 @@ function TermManagement({ pending, published, categories, retiredIds, openCatego
       .map(term => ({ ...term, code: term.id, builtin: true, kind: 'ingredient' as const })),
     ...published.map(term => ({ ...term, builtin: publicBaseTerms.ingredients.some(item => item.id === term.id), kind: 'ingredient' as const })),
   ]
-  const rows: TermRow[] = (scope === 'pending' ? pending : publicRows).filter(term =>
+  const rows: TermRow[] = (scope === 'pending' ? pending : scope === 'public' ? publicRows : [...publicRows, ...pending]).filter(term =>
+    (!withoutCode || (term.kind === 'ingredient' && !(term.code ?? '').trim())) &&
     (categoryFilter === undefined || (term.kind === 'ingredient' && (term.group ?? 'Overige ingrediënten') === categoryFilter)) &&
     [term.name, term.code ?? '', term.groupName ?? ''].some(value => nameKey(value).includes(nameKey(search))))
     .sort((a, b) => a.name.localeCompare(b.name, 'nl'))
@@ -361,6 +365,7 @@ function TermManagement({ pending, published, categories, retiredIds, openCatego
     setScope(next)
     setSearch('')
     setCategoryFilter(undefined)
+    setWithoutCode(false)
     setPage(0)
     setSelected([])
     setNotice('')
@@ -372,6 +377,7 @@ function TermManagement({ pending, published, categories, retiredIds, openCatego
       <button className={'button' + (scope === 'public' ? ' primary' : '')} aria-pressed={scope === 'public'} disabled={locked}
         onClick={() => switchScope('public')}>Alle publieke ingrediënten</button>
       <button className="button" disabled={locked} onClick={openCategories}>Categorieën</button>
+      {scope === 'all' && <button className="button primary" aria-pressed="true">Alle ingrediënten</button>}
     </div>
     <div className="form-row admin-bulk">
       <label>Zoeken<input type="search" value={search} disabled={locked} onChange={event => {
@@ -388,24 +394,41 @@ function TermManagement({ pending, published, categories, retiredIds, openCatego
         {categories.map(category => <option key={category.name} value={'category:' + category.name}>{category.name}</option>)}
         <option value="category:">Niet op boodschappenlijst</option>
       </select></label>
+      <label className="check-row"><input type="checkbox" checked={withoutCode} disabled={locked} onChange={event => {
+        setWithoutCode(event.target.checked)
+        setPage(0)
+        setSelected([])
+      }}/>Zonder code</label>
       {!!selectable.length && <label className="check-row"><input type="checkbox" checked={allSelected} disabled={locked}
         onChange={event => setSelected(event.target.checked ? selectable.map(keyFor) : [])}/>Selecteer deze pagina</label>}
     </div>
     {!!picked.length && <div className="form-row admin-bulk">
       <strong className="admin-selection-count">{picked.length} geselecteerd</strong>
+      <button className="button primary" disabled={locked || !picked.some(term => term.kind === 'ingredient')}
+        onClick={() => void change('ingredients-save', { ingredients: picked.filter(term => term.kind === 'ingredient').map(payload) })}>Selectie opslaan</button>
       <button className="button" disabled={locked || !picked.some(term => term.kind === 'ingredient')}
         onClick={() => void suggest(picked.filter(term => term.kind === 'ingredient'))}>Engelse codes voorstellen</button>
       {scope === 'pending' && <button className="button primary" disabled={locked}
         onClick={() => void change('terms-publish', { terms: picked.map(payload) })}>Selectie publiek maken</button>}
     </div>}
+    {!!picked.some(term => term.kind === 'ingredient') && <div className="form-row admin-bulk category-bulk">
+      <label>Categorie voor selectie<select value={bulkCategory} disabled={locked} onChange={event => setBulkCategory(event.target.value)}>
+        <option value="">Kies een categorie…</option>
+        {categories.map(category => <option key={category.name}>{category.name}</option>)}
+      </select></label>
+      <button className="button" disabled={locked || !bulkCategory} onClick={() => void change('ingredients-category', {
+        ingredients: picked.filter(term => term.kind === 'ingredient').map(term => ({ id: term.id, groupId: term.groupId })), group: bulkCategory,
+      })}>Categorie toewijzen</button>
+    </div>}
     {suggesting && <p role="status">Engelse codes ophalen…</p>}
-    {notice && <p role="status">{notice}</p>}
+    <Toast message={notice}/>
     {!visible.length && <div className="term-empty" role="status">
-      <span className="term-empty-icon"><Icon name={search.trim() || categoryFilter !== undefined ? 'search' : 'check'}/></span>
-      <strong>{search.trim() || categoryFilter !== undefined ? 'Geen resultaten gevonden' : scope === 'pending' ? 'Alles bijgewerkt' : 'Nog geen publieke ingrediënten'}</strong>
-      {search.trim() || categoryFilter !== undefined ? <button className="button" disabled={locked} onClick={() => {
+      <span className="term-empty-icon"><Icon name={search.trim() || categoryFilter !== undefined || withoutCode ? 'search' : 'check'}/></span>
+      <strong>{search.trim() || categoryFilter !== undefined || withoutCode ? 'Geen resultaten gevonden' : scope === 'pending' ? 'Alles bijgewerkt' : 'Nog geen publieke ingrediënten'}</strong>
+      {search.trim() || categoryFilter !== undefined || withoutCode ? <button className="button" disabled={locked} onClick={() => {
         setSearch('')
         setCategoryFilter(undefined)
+        setWithoutCode(false)
         goToPage(0)
       }}>Wis filters</button>
         : scope === 'pending' && <p>Er wachten geen ingrediënten of kenmerken op goedkeuring.</p>}
@@ -500,8 +523,9 @@ function CategoryRow({ category, categories, busy, change }: { category: Ingredi
   const protectedCategory = category.name === 'Overige ingrediënten'
   return <article className="category-row">
     <form className="form-row" onSubmit={event => { event.preventDefault(); void change('category-save', { name, previous: category.name }) }}>
-      <label>Categorienaam<input aria-label={'Naam van categorie ' + category.name} value={name} maxLength={80} required disabled={busy || protectedCategory} onChange={event => setName(event.target.value)}/></label>
-      <small>{category.count} {category.count === 1 ? 'ingrediënt' : 'ingrediënten'}</small>
+      <label>Categorienaam<span className="category-name-group"><input aria-label={'Naam van categorie ' + category.name} value={name} maxLength={80} required disabled={busy || protectedCategory} onChange={event => setName(event.target.value)}/>
+        <a className="button category-count" aria-label={`${category.count} ingrediënten in ${category.name} bekijken`} href={'/admin/terms?' + new URLSearchParams({ scope: 'all', category: category.name })}>{category.count}</a>
+      </span></label>
       {!protectedCategory && <button className="button" disabled={busy || name === category.name}>Opslaan</button>}
     </form>
     {!protectedCategory ? <details className="category-remove"><summary>Categorie verwijderen</summary>
@@ -583,7 +607,7 @@ function EmailManagement() {
         <button type="button" className="button" disabled={busy} onClick={() => void run('preview')}>Voorbeeld bekijken</button>
       </div>
     </form>}
-    {message && <p role="status">{message}</p>}
+    <Toast message={message}/>
     {preview && <section className="email-preview">
       <h2>Voorbeeld</h2>
       <p className="email-preview-subject">Onderwerp: <strong>{preview.subject}</strong></p>

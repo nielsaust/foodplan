@@ -62,6 +62,19 @@ export function createModeration(store) {
 
   return {
     ingredientManagement,
+    assignCategory({ ingredients, group }) {
+      if (!Array.isArray(ingredients) || !ingredients.length || ingredients.length > 20 || ingredients.some(item => !item || typeof item.id !== 'string' || (item.groupId !== undefined && typeof item.groupId !== 'string'))) throw new InputError('Selecteer één tot twintig ingrediënten.')
+      ingredientManagement.requireCategory(group)
+      return store.transaction(() => {
+        const publicIngredients = { ...ingredientById, ...Object.fromEntries(store.publicTerms().ingredients.map(term => [term.id, term])) }
+        for (const item of ingredients) {
+          const previous = publicIngredients[item.id] ?? (item.groupId && store.read(item.groupId)?.state.customIngredients?.[item.id])
+          if (!previous) throw new InputError('Een geselecteerd ingrediënt bestaat niet meer.')
+          this.editIngredient({ id: item.id, groupId: item.groupId, name: previous.name, code: previous.code ?? '', group })
+        }
+        return { message: ingredients.length + ' ingrediënten toegewezen aan ' + group + '.' }
+      })
+    },
     publicRecipes,
     async suggestIngredientCode(name, id, reserved = []) {
       if (typeof name !== 'string' || !name.trim() || name.length > 80 || typeof id !== 'string') {

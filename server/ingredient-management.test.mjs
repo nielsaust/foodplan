@@ -183,3 +183,35 @@ test('pending recipes with private tags remain valid through merging', () => {
   assert.deepEqual(moderation.review(pending.id).recipe.tagIds, [tagId])
   store.db.close()
 })
+
+test('bulk save updates selected ingredients atomically without publishing them', async () => {
+  const { store, auth, seed } = setup()
+  seed()
+  const request = { socket: { remoteAddress: '127.0.0.1' }, headers: {} }
+  const current = { superuser: true }
+  const first = { id: sourceId, groupId: 'group-a', name: 'Verse eieren', code: '', group: 'Koeling' }
+  const before = store.read('group-a')
+  await assert.rejects(auth.handle('ingredients-save', { ingredients: [first, { id: 'missing', name: 'Missing', code: '' }] }, request, current))
+  assert.deepEqual(store.read('group-a'), before)
+  await auth.handle('ingredients-save', { ingredients: [first, { id: targetId, name: 'Ei', code: '', group: 'Koeling' }] }, request, current)
+  assert.equal(store.read('group-a').state.customIngredients[sourceId].name, 'Verse eieren')
+  assert.equal(store.publicTerms().ingredients.some(item => item.id === sourceId), false)
+  await assert.rejects(auth.handle('ingredients-save', { ingredients: [first] }, request, { superuser: false }), { status: 403 })
+  store.db.close()
+})
+
+test('bulk category assignment preserves names and codes, updates both scopes and rolls back on error', () => {
+  const { store, moderation, seed } = setup()
+  seed()
+  const before = store.read('group-a')
+  assert.throws(() => moderation.assignCategory({ ingredients: [{ id: sourceId, groupId: 'group-a' }, { id: 'missing' }], group: 'Voorraadkast' }))
+  assert.deepEqual(store.read('group-a'), before)
+  moderation.assignCategory({ ingredients: [{ id: sourceId, groupId: 'group-a' }, { id: targetId }], group: 'Voorraadkast' })
+  const term = store.read('group-a').state.customIngredients[sourceId]
+  assert.equal(term.group, 'Voorraadkast')
+  assert.equal(term.name, 'Eieren')
+  assert.equal(store.publicTerms().ingredients.find(item => item.id === targetId).group, 'Voorraadkast')
+  assert.equal(store.publicTerms().ingredients.some(item => item.id === sourceId), false)
+  assert.throws(() => moderation.assignCategory({ ingredients: [{ id: targetId }], group: 'missing' }))
+  store.db.close()
+})
