@@ -24,6 +24,7 @@ export function importAction(body, state, publicTerms) {
   check(Array.isArray(body.steps) && body.steps.length >= 1 && body.steps.length <= 30 && body.steps.every(step => text(step, 600)), 'Geef 1 tot 30 bereidingsstappen van maximaal 600 tekens op.')
   check(Array.isArray(body.tags) && body.tags.length <= 20 && body.tags.every(tag => text(tag, 40)), 'Geef tags op als een lijst met maximaal 20 kenmerken; [] mag.')
   const available = [...Object.values(ingredientById), ...Object.values(state.customIngredients ?? {}), ...publicTerms.ingredients]
+    .filter(item => !state.retiredIngredientIds?.includes(item.id))
   const knownTags = [...baseTags, ...Object.values(state.customTags ?? {}), ...publicTerms.tags]
   const terms = { ingredients: [], tags: [] }
   const keys = new Map()
@@ -102,7 +103,7 @@ export function createRecipeImport(store) {
     receive(code, body) {
       return store.transaction(() => {
         const link = requireActive(code)
-        const action = importAction(body, store.read(link.group_id).state, store.publicTerms())
+        const action = importAction(body, store.withCatalog(store.read(link.group_id).state), store.publicTerms())
         store.write(link.group_id, action)
         db.prepare('DELETE FROM recipe_import_links WHERE hash = ?').run(link.hash)
         return { recipe: { id: action.recipe.id, title: action.recipe.title.trim() }, message: 'Recept toegevoegd aan je huishouden.' }

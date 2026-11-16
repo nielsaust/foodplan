@@ -6,7 +6,7 @@ export const pagePaths = {
   beheer: '/admin',
 } as const
 export type Page = keyof typeof pagePaths
-export const adminSections = ['transfer', 'publications', 'terms', 'accounts', 'emails', 'groups'] as const
+export const adminSections = ['transfer', 'publications', 'terms', 'categories', 'accounts', 'emails', 'groups'] as const
 export function pageFromPath(path: string): Page {
   return (Object.entries(pagePaths).find(([, route]) => path === route || (route === '/admin' && path.startsWith(route + '/')))?.[0] as Page) ?? 'planning'
 }

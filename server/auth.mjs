@@ -244,7 +244,17 @@ export function createAuth(store, mail = sendMail) {
         return emailTemplates.preview(body.kind, body.template)
       case 'admin-overview':
         requireSuperuser(current)
-        return { ...management(), publications: moderation.list(), terms: moderation.pendingTerms(), publicIngredients: store.publicTerms().ingredients }
+        return { ...management(), publications: moderation.list(), terms: moderation.pendingTerms(), publicIngredients: store.publicTerms().ingredients,
+          categories: moderation.ingredientManagement.categories(), retiredIngredientIds: moderation.ingredientManagement.retiredIds() }
+      case 'ingredient-merge':
+        requireSuperuser(current)
+        return moderation.ingredientManagement.merge(body)
+      case 'category-save':
+        requireSuperuser(current)
+        return moderation.ingredientManagement.saveCategory(body)
+      case 'category-delete':
+        requireSuperuser(current)
+        return moderation.ingredientManagement.deleteCategory(body)
       case 'public-recipe-edit':
         requireSuperuser(current)
         return moderation.editPublic(body.recipe, body.terms)

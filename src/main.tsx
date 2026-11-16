@@ -796,7 +796,6 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
   const [notice, setNotice] = useState('')
   const catalog = state ? householdRecipes(state) : {}
   const recipes = state ? Object.values(catalog).filter(recipe => canScheduleRecipe(state, recipe.id)) : []
-  const suggestions = starterRecipes.filter(recipe => state?.includeStarterRecipes !== false && state && canScheduleRecipe(state, recipe.id)).map(recipe => catalog[recipe.id])
   const selectedRecipe = modal?.kind === 'recipe' ? modal.publicRecipe ?? catalog[modal.id] : undefined
   const isPrivate = modal?.kind === 'recipe' && !modal.publicRecipe && Object.hasOwn(state?.recipeEdits ?? {}, modal.id)
   const archived = !!selectedRecipe && (modal?.kind === 'recipe' && modal.reviewStatus === 'archived' ||
@@ -804,7 +803,7 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
   const isPublished = !!selectedRecipe && !isPrivate && (modal?.kind === 'recipe' && modal.reviewStatus
     ? modal.reviewStatus === 'approved' : !!state?.publicRecipes?.[selectedRecipe.id] && !archived)
   const publicTerms = {
-    ingredients: [...publicBaseTerms.ingredients.filter(term => !publishedTerms.ingredients.some(item => item.id === term.id)), ...publishedTerms.ingredients],
+    ingredients: [...publicBaseTerms.ingredients.filter(term => !publishedTerms.ingredients.some(item => item.id === term.id) && !state?.retiredIngredientIds?.includes(term.id)), ...publishedTerms.ingredients],
     tags: [...publicBaseTerms.tags, ...publishedTerms.tags],
   }
   const privateTerms = {
@@ -838,6 +837,8 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
   const todayMeal = state?.meals.find(meal => meal.date === current)
   const todayRecipe = todayMeal && catalog[todayMeal.recipeId]
   const days = datesFrom(week, 7)
+  const weekRecipeIds = new Set(days.map(date => state?.meals.find(meal => meal.date === date)?.recipeId))
+  const weekRecipes = [...weekRecipeIds].flatMap(id => id && catalog[id] ? [catalog[id]] : [])
   const planned = state?.meals.filter(meal => days.includes(meal.date)).length ?? 0
   const navigate = (id: Tab) => {
     const url = new URL(window.location.href)
@@ -910,9 +911,10 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
             <span role="status">{notice}</span>
           </div>
         </section>
-        {suggestions.length > 0 && <section className="suggestions"><div className="section-heading"><div><h2>Voor deze week</h2><p>Ideeën voor je volgende avondmaaltijd.</p></div>
+        <section className="suggestions"><div className="section-heading"><div><h2>Recepten in deze week</h2><p>Gepland van {formatShort(week)} tot {formatShort(days[6])}. Elk recept staat hier één keer.</p></div>
           <button className="button text" onClick={() => navigate('recepten')}>Alle recepten <Icon name="arrow" size={17}/></button>
-        </div><RecipeCards recipes={suggestions} onOpen={openRecipe}/></section>}
+        </div>{weekRecipes.length > 0 ? <RecipeCards recipes={weekRecipes} onOpen={openRecipe}/>
+          : <p className="empty">Er zijn nog geen recepten ingepland in deze week. Kies hierboven een dag om een recept te plannen.</p>}</section>
       </>}
       {state && tab === 'recepten' && <>
         <div className="page-heading"><div className="eyebrow"><Icon name="book" size={16}/> Het receptenboek</div><h1>Recepten</h1><p>Vind en filter recepten, voeg je eigen gerechten toe of pas een recept aan.</p></div>

@@ -40,9 +40,9 @@ export function validateTerm(term, kind, allowBuiltin = false) {
   const ingredient = kind === 'ingredient'
   const builtin = ingredient && allowBuiltin && Object.hasOwn(ingredientById, term?.id) ? ingredientById[term.id] : undefined
   requireInput(record(term) && typeof term.id === 'string' && (builtin || new RegExp('^' + kind + '-[a-f0-9]{32}$').test(term.id)) &&
-    nameOk(term.name, ingredient ? 80 : 40) && localized(term.translations, { name: value => nameOk(value, ingredient ? 80 : 40) }) && (!ingredient || (typeof term.unit === 'string' && isUnit(term.unit) && (term.code === undefined || (typeof term.code === 'string' && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(term.code) && term.code.length <= 64)))))
+    nameOk(term.name, ingredient ? 80 : 40) && localized(term.translations, { name: value => nameOk(value, ingredient ? 80 : 40) }) && (!ingredient || ((term.group === undefined || (typeof term.group === 'string' && term.group.length <= 80)) && typeof term.unit === 'string' && isUnit(term.unit) && (term.code === undefined || (typeof term.code === 'string' && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(term.code) && term.code.length <= 64)))))
   return ingredient
-    ? { id: term.id, name: term.name.trim(), unit: builtin?.unit ?? term.unit, code: term.code, group: builtin?.group ?? 'Overige ingrediënten', shelfDays: builtin?.shelfDays, translations: term.translations }
+    ? { id: term.id, name: term.name.trim(), unit: builtin?.unit ?? term.unit, code: term.code, group: term.group?.trim() ?? builtin?.group ?? 'Overige ingrediënten', shelfDays: builtin?.shelfDays ?? term.shelfDays, translations: term.translations }
     : { id: term.id, name: term.name.trim(), translations: term.translations }
 }
 
@@ -444,15 +444,25 @@ export function openStore(file) {
       return transaction(() => {
         const { state, revision } = read(groupId)
         const next = restore ? importState(action, addCatalog({ meals: action?.state?.meals ?? [] }).publicRecipes) : addCatalog(state)
+        if (restore && db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'ingredient_merges'").get()) {
+          const merged = db.prepare("SELECT source_id FROM ingredient_merges WHERE group_id = '' OR group_id = ?").all(groupId)
+          if (Object.values(next.recipeEdits ?? {}).some(recipe => merged.some(row => Object.hasOwn(recipe.amounts, row.source_id)))) throw new InputError('Deze back-up bevat een samengevoegd ingrediënt. Werk de receptverwijzingen bij voordat je de back-up herstelt.')
+        }
         if (restore) next.household = state.household
-        else apply(next, action, action?.type === 'saveRecipe' ? publicTerms() : undefined)
+        else {
+          if (action?.type === 'saveRecipe' && db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'ingredient_merges'").get()) {
+            const merged = db.prepare("SELECT source_id FROM ingredient_merges WHERE group_id = '' OR group_id = ?").all(groupId)
+            if (merged.some(row => Object.hasOwn(action.recipe?.amounts ?? {}, row.source_id))) throw new InputError('Een ingrediënt is inmiddels samengevoegd. Herlaad het recept en kies het bestaande ingrediënt.')
+          }
+          apply(next, action, action?.type === 'saveRecipe' ? publicTerms() : undefined)
+        }
         if (!restore && action.type === 'deleteRecipe' && db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'recipe_publications'").get()) {
           db.prepare("DELETE FROM recipe_publications WHERE group_id = ? AND recipe_id = ? AND status = 'pending'").run(groupId, action.id)
         }
         for (const meal of next.meals.filter(item => item.leftoverOf)) {
           requireInput([1, 2, 3].some(days => addDays(meal.leftoverOf, days) === meal.date) && next.meals.some(source => source.date === meal.leftoverOf && !source.leftoverOf && source.recipeId === meal.recipeId))
         }
-        const { publicRecipes, archivedRecipeIds, publicIngredients, ...persisted } = next
+        const { publicRecipes, archivedRecipeIds, publicIngredients, retiredIngredientIds, ...persisted } = next
         update.run(JSON.stringify(persisted), groupId)
         return { state: persisted, revision: revision + 1 }
       })

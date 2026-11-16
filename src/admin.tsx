@@ -5,17 +5,21 @@ import { nameKey, publicBaseTerms } from '../domain/terms'
 import { useEffect, useId, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import type { Ingredient, Recipe } from '../domain/catalog'
+import { TermPicker } from './term-picker'
+import { quantityInUnit } from '../domain/units'
 
 type ManagedAccount = { id: string; name: string; email: string; groupId: string; role: string; created: number | null; blocked: number; superuser: number; granted: number }
 type ManagedGroup = { id: string; name: string; members: number; created: number | null; blocked: number }
 type Publication = { id: string; title: string; groupName: string; status: 'pending' | 'approved' | 'rejected' | 'archived'; created: number }
-type PendingTerm = { id: string; groupId: string; groupName: string; kind: 'ingredient' | 'tag'; name: string; unit?: string; code?: string }
+type PendingTerm = { id: string; groupId: string; groupName: string; kind: 'ingredient' | 'tag'; name: string; unit?: string; code?: string; group?: string }
+type IngredientCategory = { name: string; count: number }
 export type Review = { recipe: Recipe; ingredients: Record<string, Ingredient> }
-type Overview = { accounts: ManagedAccount[]; groups: ManagedGroup[]; publications: Publication[]; terms: PendingTerm[]; publicIngredients: Ingredient[] }
+type Overview = { accounts: ManagedAccount[]; groups: ManagedGroup[]; publications: Publication[]; terms: PendingTerm[]; publicIngredients: Ingredient[]; categories: IngredientCategory[]; retiredIngredientIds: string[] }
 const sections = {
   transfer: { title: 'Publieke recepten overzetten', description: 'Importeer of exporteer recepten via een JSON-bestand.' },
   publications: { title: 'Receptpublicaties', description: 'Beoordeel inzendingen en beheer gepubliceerde recepten.' },
   terms: { title: 'Ingrediënten en kenmerken', description: 'Bekijk nieuwe termen en maak ze publiek.' },
+  categories: { title: 'Ingrediëntcategorieën', description: 'Beheer de categorieën op de boodschappenlijst.' },
   accounts: { title: 'Accounts', description: 'Beheer gebruikers en beheerrechten.' },
   emails: { title: 'Accountmails', description: 'Bewerk Nederlandse mailteksten en bekijk een voorbeeld.' },
   groups: { title: 'Groepen', description: 'Bekijk en beheer huishoudens.' },
@@ -235,8 +239,11 @@ export function AdminPage({ accountId, groupId, openRecipe, revision }: { revisi
       <section className="panel people-panel" hidden={section !== "terms"}>
 
         <TermManagement pending={overview?.terms ?? []} published={overview?.publicIngredients ?? []}
+          categories={overview?.categories ?? []} retiredIds={overview?.retiredIngredientIds ?? []} openCategories={() => navigate('categories')}
           busy={busy} change={change}/>
       </section>
+      {section === 'categories' && <section className="panel people-panel"><div className="form-row"><button className="button" onClick={() => navigate('terms')}>Ingrediënten en kenmerken</button><button className="button primary" aria-pressed="true">Categorieën</button></div>
+        <CategoryManagement categories={overview?.categories ?? []} busy={busy} change={change}/></section>}
       {section === 'accounts' && <div className="admin-account-actions"><p>{sections.accounts.description}</p><button className="button primary" onClick={() => { setError(''); setMessage(''); setInviteOpen(true) }}><Icon name="plus"/> Superuser uitnodigen</button></div>}
       {inviteOpen && section === 'accounts' && <dialog ref={node => { if (node && !node.open) node.showModal() }} aria-labelledby="invite-superuser-title" onCancel={event => { if (event.target !== event.currentTarget) return; event.preventDefault(); if (!busy) setInviteOpen(false) }}>
         <div className="dialog-content"><div className="dialog-heading"><h2 id="invite-superuser-title">Superuser uitnodigen</h2><button className="icon-button" disabled={busy} aria-label="Sluiten" onClick={() => setInviteOpen(false)}><Icon name="close"/></button></div>
@@ -283,11 +290,12 @@ export function AdminPage({ accountId, groupId, openRecipe, revision }: { revisi
   </>
 }
 
-type TermRow = { id: string; name: string; kind: 'ingredient' | 'tag'; groupId?: string; groupName?: string; unit?: string; code?: string; builtin?: boolean }
-type TermDraft = { name: string; code: string }
+type TermRow = { id: string; name: string; kind: 'ingredient' | 'tag'; groupId?: string; groupName?: string; unit?: string; code?: string; builtin?: boolean; group?: string }
+type TermDraft = { name: string; code: string; group: string }
 
-function TermManagement({ pending, published, busy, change }: {
+function TermManagement({ pending, published, categories, retiredIds, openCategories, busy, change }: {
   pending: PendingTerm[]; published: Ingredient[]; busy: boolean
+  categories: IngredientCategory[]; retiredIds: string[]; openCategories: () => void
   change: (route: string, body: Record<string, unknown>) => Promise<void>
 }) {
   const [scope, setScope] = useState<'pending' | 'public'>('pending')
@@ -295,13 +303,14 @@ function TermManagement({ pending, published, busy, change }: {
   const [page, setPage] = useState(0)
   const [selected, setSelected] = useState<string[]>([])
   const [drafts, setDrafts] = useState<Record<string, TermDraft>>({})
+  useEffect(() => { setDrafts({}) }, [pending, published])
   const [suggesting, setSuggesting] = useState(false)
   const [notice, setNotice] = useState('')
   const keyFor = (term: TermRow) => (term.groupId ?? '') + '/' + term.id
-  const draftFor = (term: TermRow) => drafts[keyFor(term)] ?? { name: term.name, code: term.code ?? '' }
+  const draftFor = (term: TermRow) => drafts[keyFor(term)] ?? { name: term.name, code: term.code ?? '', group: term.group ?? 'Overige ingrediënten' }
   const payload = (term: TermRow) => ({ id: term.id, groupId: term.groupId, kind: term.kind, ...draftFor(term) })
   const publicRows: TermRow[] = [
-    ...publicBaseTerms.ingredients.filter(term => !published.some(item => item.id === term.id))
+    ...publicBaseTerms.ingredients.filter(term => !published.some(item => item.id === term.id) && !retiredIds.includes(term.id))
       .map(term => ({ ...term, code: term.id, builtin: true, kind: 'ingredient' as const })),
     ...published.map(term => ({ ...term, builtin: publicBaseTerms.ingredients.some(item => item.id === term.id), kind: 'ingredient' as const })),
   ]
@@ -359,6 +368,7 @@ function TermManagement({ pending, published, busy, change }: {
         onClick={() => switchScope('pending')}>Goed te keuren <span className="admin-badge">{pending.length}</span></button>
       <button className={'button' + (scope === 'public' ? ' primary' : '')} aria-pressed={scope === 'public'} disabled={locked}
         onClick={() => switchScope('public')}>Alle publieke ingrediënten</button>
+      <button className="button" disabled={locked} onClick={openCategories}>Categorieën</button>
     </div>
     <div className="form-row admin-bulk">
       <label>Zoeken<input type="search" value={search} disabled={locked} onChange={event => {
@@ -404,6 +414,10 @@ function TermManagement({ pending, published, busy, change }: {
               disabled={locked} onChange={event => updateDraft(term, { name: event.target.value })}/></label>
             {term.kind === 'ingredient' && <label>Code<input maxLength={64} pattern="[a-z0-9]+(?:-[a-z0-9]+)*" value={draft.code}
               disabled={locked} onChange={event => updateDraft(term, { code: event.target.value })}/></label>}
+            {term.kind === 'ingredient' && <label className="ingredient-category-field">Categorie<select value={draft.group} disabled={locked} onChange={event => updateDraft(term, { group: event.target.value })}>
+              {draft.group === '' && <option value="">Niet op boodschappenlijst</option>}
+              {categories.map(category => <option key={category.name} value={category.name}>{category.name}</option>)}
+            </select></label>}
             {term.kind === 'ingredient' && <>
               <button type="button" className="icon-button" title="Engelse code voorstellen" aria-label={'Engelse code voorstellen voor ' + term.name}
                 disabled={locked} onClick={() => void suggest([term])}><Icon name="generate"/></button>
@@ -411,6 +425,9 @@ function TermManagement({ pending, published, busy, change }: {
             </>}
             {term.groupId && <button className="button" value="publish" disabled={locked}>Publiek maken</button>}
           </form>
+          {term.kind === 'ingredient' && <IngredientMerge source={term} busy={locked} change={change}
+            options={[...publicRows, ...pending.filter(item => item.kind === 'ingredient' && item.groupId === term.groupId && !publicRows.some(publicTerm => publicTerm.id === item.id))]
+              .filter(item => item.id !== term.id)}/>}
         </div>
       </article>
     })}
@@ -425,6 +442,65 @@ function TermManagement({ pending, published, busy, change }: {
       <button className="icon-button" aria-label="Volgende pagina" disabled={locked || currentPage + 1 === pageCount} onClick={() => goToPage(currentPage + 1)}><Icon name="right"/></button>
     </div>}
   </>
+}
+
+function IngredientMerge({ source, options, busy, change }: { source: TermRow; options: TermRow[]; busy: boolean; change: (route: string, body: Record<string, unknown>) => Promise<void> }) {
+  const [target, setTarget] = useState<TermRow>()
+  const ratio = target && source.unit && target.unit ? quantityInUnit(1, source.unit, target.unit) : undefined
+  return <details className="ingredient-merge">
+    <summary>Controleer soortgelijk ingrediënt</summary>
+    <div className="ingredient-merge-content">
+      <p>Is dit hetzelfde ingrediënt onder een andere naam? Zoek het bestaande ingrediënt om {source.name} daarmee te vervangen.</p>
+      <TermPicker label="Bestaand ingrediënt zoeken" options={options} maxLength={80} disabled={busy}
+        describe={item => `${item.unit} · ${item.groupId ? item.groupName : 'Publiek'}`}
+        pick={setTarget}/>
+      {target && <>
+        <div className="ingredient-merge-preview"><strong>{source.name} → {target.name}</strong><p>{ratio === undefined
+          ? `De eenheden ${source.unit} en ${target.unit} zijn niet automatisch omrekenbaar. Kies een ander ingrediënt.`
+          : `1 ${source.unit} wordt ${new Intl.NumberFormat('nl-NL', { maximumFractionDigits: 6 }).format(ratio)} ${target.unit}${target.unit?.endsWith('.') ? '' : '.'} Recepten, stappen en vertalingen worden bijgewerkt. Bestaande hoeveelheden worden opgeteld.`}</p>
+          <small>{source.groupId ? `Geldt voor privérecepten en inzendingen van ${source.groupName}.` : 'Geldt voor alle huishoudens en publieke recepten.'} Controleer na samenvoegen de afvinkstatus op je boodschappenlijst.</small></div>
+        <button type="button" className="button" disabled={busy || ratio === undefined} onClick={() => {
+          if (!window.confirm(`${source.name} vervangen door ${target.name}? Het oorspronkelijke ingrediënt verdwijnt en alle bijbehorende receptverwijzingen worden bijgewerkt. Dit kan niet via deze pagina worden teruggedraaid.`)) return
+          void change('ingredient-merge', { id: source.id, groupId: source.groupId, targetId: target.id })
+        }}>Vervang door {target.name}</button>
+      </>}
+    </div>
+  </details>
+}
+
+function CategoryManagement({ categories, busy, change }: { categories: IngredientCategory[]; busy: boolean; change: (route: string, body: Record<string, unknown>) => Promise<void> }) {
+  return <div className="category-management">
+    <form className="form-row" onSubmit={event => {
+      event.preventDefault()
+      const form = event.currentTarget
+      const name = String(new FormData(form).get('name'))
+      void change('category-save', { name })
+    }}><label>Nieuwe categorie<input name="name" required maxLength={80} disabled={busy}/></label><button className="button primary" disabled={busy}><Icon name="plus"/> Categorie toevoegen</button></form>
+    <p className="category-help">Kies bij ieder ingrediënt een categorie. Hernoemen werkt meteen door op de boodschappenlijsten. Bij verwijderen verplaats je de ingrediënten naar een andere categorie.</p>
+    {categories.map(category => <CategoryRow key={category.name} category={category} categories={categories} busy={busy} change={change}/>)}
+  </div>
+}
+
+function CategoryRow({ category, categories, busy, change }: { category: IngredientCategory; categories: IngredientCategory[]; busy: boolean; change: (route: string, body: Record<string, unknown>) => Promise<void> }) {
+  const [name, setName] = useState(category.name)
+  const [replacement, setReplacement] = useState('Overige ingrediënten')
+  const protectedCategory = category.name === 'Overige ingrediënten'
+  return <article className="category-row">
+    <form className="form-row" onSubmit={event => { event.preventDefault(); void change('category-save', { name, previous: category.name }) }}>
+      <label>Categorienaam<input aria-label={'Naam van categorie ' + category.name} value={name} maxLength={80} required disabled={busy || protectedCategory} onChange={event => setName(event.target.value)}/></label>
+      <small>{category.count} {category.count === 1 ? 'ingrediënt' : 'ingrediënten'}</small>
+      {!protectedCategory && <button className="button" disabled={busy || name === category.name}>Opslaan</button>}
+    </form>
+    {!protectedCategory ? <details className="category-remove"><summary>Categorie verwijderen</summary>
+      <form className="form-row" onSubmit={event => {
+        event.preventDefault()
+        if (!window.confirm(`${category.name} verwijderen en de ingrediënten verplaatsen naar ${replacement}?`)) return
+        void change('category-delete', { name: category.name, replacement })
+      }}><label>Ingrediënten verplaatsen naar<select value={replacement} disabled={busy} onChange={event => setReplacement(event.target.value)}>
+        {categories.filter(item => item.name !== category.name).map(item => <option key={item.name}>{item.name}</option>)}
+      </select></label><button className="button danger" disabled={busy}>Verplaatsen en verwijderen</button></form>
+    </details> : <small>Vaste opvangcategorie voor ingrediënten zonder categorie.</small>}
+  </article>
 }
 
 

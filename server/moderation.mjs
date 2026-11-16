@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { ingredientById, recipes } from '../domain/catalog.ts'
 import { baseTags, nameKey, ingredientCode } from '../domain/terms.ts'
 import { InputError, validateRecipe, validateTerm } from './store.mjs'
+import { createIngredientManagement } from './ingredient-management.mjs'
 
 export function createModeration(store) {
   const { db } = store
@@ -16,6 +17,7 @@ export function createModeration(store) {
       created INTEGER NOT NULL
     );
   `)
+  const ingredientManagement = createIngredientManagement(store)
   function canonicalTags(recipe) {
     if (!recipe.tagIds) return recipe.tags
     const terms = new Map([...baseTags, ...store.publicTerms().tags].map(term => [term.id, term.name]))
@@ -44,6 +46,7 @@ export function createModeration(store) {
       publicRecipes: Object.fromEntries([...publicRecipes(), ...archived.map(fromRow)].map(recipe => [recipe.id, recipe])),
       archivedRecipeIds: archived.map(row => row.id),
       publicIngredients: Object.fromEntries(store.publicTerms().ingredients.map(item => [item.id, item])),
+      retiredIngredientIds: ingredientManagement.retiredIds(),
     }
   })
   function codeTaken(code, id) {
@@ -58,6 +61,7 @@ export function createModeration(store) {
   }
 
   return {
+    ingredientManagement,
     publicRecipes,
     async suggestIngredientCode(name, id, reserved = []) {
       if (typeof name !== 'string' || !name.trim() || name.length > 80 || typeof id !== 'string') {
@@ -78,8 +82,9 @@ export function createModeration(store) {
       for (let suffix = 2; codeTaken(code, id) || reserved.includes(code); suffix++) code = base + '-' + suffix
       return { code }
     },
-    editIngredient({ groupId, id, name, code }) {
+    editIngredient({ groupId, id, name, code, group }) {
       store.transaction(() => {
+        if (ingredientManagement.retiredIds().includes(id)) throw new InputError('Dit ingrediënt is inmiddels samengevoegd. Herlaad het ingrediëntenbeheer.')
         const published = db.prepare("SELECT data FROM public_terms WHERE id = ? AND kind = 'ingredient'").get(id)
         const row = groupId && db.prepare('SELECT data FROM group_states WHERE id = ?').get(groupId)
         const state = row ? JSON.parse(row.data) : undefined
@@ -87,7 +92,8 @@ export function createModeration(store) {
         const previous = published ? JSON.parse(published.data) : builtin ?? state?.customIngredients?.[id]
         if (!previous) throw new InputError('Dit ingrediënt bestaat niet meer.')
         if (typeof code !== 'string' || (code && codeTaken(code, id))) throw new InputError('Deze ingrediëntcode is al bezet of ongeldig.')
-        const term = validateTerm({ ...previous, name, code: code || undefined }, 'ingredient', true)
+        const term = validateTerm({ ...previous, name, code: code || undefined, ...(group === undefined ? {} : { group }) }, 'ingredient', true)
+        ingredientManagement.requireCategory(term.group)
         if (published || builtin) {
           db.prepare("INSERT INTO public_terms VALUES (?, 'ingredient', ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data").run(id, JSON.stringify(term))
         }
@@ -98,14 +104,23 @@ export function createModeration(store) {
           const household = JSON.parse(row.data)
           const existing = household.customIngredients[id]
           if (existing) {
-            household.customIngredients[id] = { ...existing, name: term.name, code: term.code }
+            household.customIngredients[id] = { ...existing, name: term.name, code: term.code, group: term.group }
             update.run(JSON.stringify(household), row.id)
+          }
+        }
+        for (const row of db.prepare('SELECT id, group_id, recipe FROM recipe_publications').all()) {
+          if (!published && !builtin && row.group_id !== groupId) continue
+          const recipe = JSON.parse(row.recipe)
+          if (recipe.catalogSnapshot?.ingredients?.[id]) {
+            recipe.catalogSnapshot.ingredients[id] = term
+            db.prepare('UPDATE recipe_publications SET recipe = ? WHERE id = ?').run(JSON.stringify(recipe), row.id)
           }
         }
       })
     },
     editPublic(recipe, additions = {}) {
       return store.transaction(() => {
+      if (ingredientManagement.retiredIds().some(id => Object.hasOwn(recipe?.amounts ?? {}, id))) throw new InputError('Een ingrediënt is inmiddels samengevoegd. Herlaad het recept en kies het bestaande ingrediënt.')
       for (const [kind, entries] of [['ingredient', additions.ingredients ?? []], ['tag', additions.tags ?? []]]) {
         if (!Array.isArray(entries) || entries.length > 200) throw new InputError('Ongeldige ingrediënten of kenmerken.')
         for (const entry of entries) {
@@ -178,6 +193,7 @@ export function createModeration(store) {
         }
         const insert = db.prepare("INSERT INTO recipe_publications VALUES (?, ?, ?, ?, 'approved', ?)")
         for (const recipe of additions) {
+          if (ingredientManagement.retiredIds().some(id => Object.hasOwn(recipe.amounts ?? {}, id))) throw new InputError('Deze catalogus bevat een samengevoegd ingrediënt. Werk eerst de broncatalogus bij.')
           validateRecipe(recipe, ingredients, tags)
           const { id, title, subtitle, cuisine, description, minutes, theme, image, tagIds, amounts, steps, translations, source, nutrition } = recipe
           const labels = tagIds ? tagIds.map(key => tags[key].name) : recipe.tags
@@ -197,7 +213,8 @@ export function createModeration(store) {
         WHERE NOT EXISTS (SELECT 1 FROM public_terms p WHERE p.id = t.key)
       `).all().map(({ data, ...row }) => ({ ...row, ...JSON.parse(data) }))
     },
-    publishTerm({ groupId, id, kind, name, code }) {
+    publishTerm({ groupId, id, kind, name, code, group }) {
+      return store.transaction(() => {
       if (typeof groupId !== 'string' || typeof id !== 'string' || !['ingredient', 'tag'].includes(kind)) {
         throw new InputError('Kies een ingrediënt of kenmerk.')
       }
@@ -206,11 +223,15 @@ export function createModeration(store) {
       const terms = kind === 'ingredient' ? state?.customIngredients : state?.customTags
       if (!Object.hasOwn(terms ?? {}, id)) throw new InputError('Deze term bestaat niet meer.')
       const term = validateTerm({ ...terms[id], name: name ?? terms[id].name,
-        code: code === undefined ? terms[id].code : code === '' ? undefined : code }, kind)
+        code: code === undefined ? terms[id].code : code === '' ? undefined : code,
+        ...(group === undefined ? {} : { group }) }, kind)
+      if (kind === 'ingredient') ingredientManagement.requireCategory(term.group)
       if (term.code && codeTaken(term.code, id)) throw new InputError('Deze ingrediëntcode is al bezet.')
       if (!db.prepare('INSERT OR IGNORE INTO public_terms VALUES (?, ?, ?)').run(id, kind, JSON.stringify(term)).changes) {
         throw new InputError('Deze term is al gepubliceerd.')
       }
+      if (kind === 'ingredient') this.editIngredient({ groupId, id, name: term.name, code: term.code ?? '', group: term.group })
+      })
     },
     copy(groupId, { id, copyId }) {
       const row = typeof id === 'string' && db.prepare("SELECT recipe, status FROM recipe_publications WHERE id = ? AND status IN ('approved', 'archived')").get(id)

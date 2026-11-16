@@ -16,6 +16,7 @@ export type State = {
   customTags?: Record<string, Tag>
   publicRecipes?: Record<string, Recipe>
   archivedRecipeIds?: string[]
+  retiredIngredientIds?: string[]
   publicIngredients?: Record<string, Ingredient>
   recipeEdits?: Record<string, Recipe>
   people: Person[]
@@ -30,7 +31,8 @@ export const householdRecipes = (state: State) => ({ ...(state.publicRecipes ?? 
 export const canScheduleRecipe = (state: State, id: string) =>
   Object.hasOwn(householdRecipes(state), id) && (!state.archivedRecipeIds?.includes(id) || Object.hasOwn(state.recipeEdits ?? {}, id))
 
-export const householdIngredients = (state: State) => ({ ...ingredientById, ...state.publicIngredients, ...state.customIngredients })
+export const householdIngredients = (state: State) => Object.fromEntries(Object.entries({ ...ingredientById, ...state.publicIngredients, ...state.customIngredients })
+  .filter(([id]) => !state.retiredIngredientIds?.includes(id)))
 
 export type Action =
   | { type: 'renameHousehold'; name: string }

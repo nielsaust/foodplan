@@ -131,6 +131,25 @@ Nieuwe ingrediënten en kenmerken worden bij het opslaan van een recept toegevoe
 de eigen groep. Een superuser kan ze onder **Beheer** publiceren. Publiceer eerst de
 privétermen van een recept voordat je het recept zelf goedkeurt.
 
+Onder **Beheer → Ingrediënten en kenmerken** kun je een categorie kiezen en via
+**Controleer soortgelijk ingrediënt** een dubbel ingrediënt vervangen door een
+bestaand ingrediënt. De zoekfunctie toont publieke ingrediënten en ingrediënten
+van hetzelfde huishouden. Compatibele eenheden worden omgerekend; hoeveelheden,
+stapverwijzingen (ook deelhoeveelheden), vertalingen en publicatie-inzendingen
+worden in één transactie bijgewerkt. Een privé-ingrediënt wordt alleen binnen
+zijn huishouden vervangen; een publiek ingrediënt in alle huishoudens en
+publicatieversies. Controleer na samenvoegen de afvinkstatus van boodschappen,
+vooral wanneer het doelingrediënt al in hetzelfde recept stond.
+
+Onder **Beheer → Ingrediëntcategorieën**, ook bereikbaar via **Categorieën** in
+het ingrediëntenbeheer, kun je categorieën toevoegen en hernoemen. Bij verwijderen
+kies je een vervangende categorie; ingrediënten blijven behouden. **Overige
+ingrediënten** blijft als vaste opvangcategorie bestaan. Categorieën werken door
+in privé-ingrediënten, publieke ingrediënten, standaardingrediënten en opgeslagen
+inzendingen. Bestaande categorieën worden automatisch uit de catalogus herkend.
+
+Tests: `node --experimental-strip-types --test server/ingredient-management.test.mjs`.
+
 Onder **Profiel** kies je metrische of Amerikaanse maateenheden. De app rekent de
 weergave van het recept, de bereidingsstappen en de boodschappenlijst om; de
 hoeveelheden en eenheden in het recept blijven opgeslagen zoals ingevoerd. Stuks
