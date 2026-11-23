@@ -62,6 +62,7 @@ export type Recipe = {
   cuisine: string
   minutes: number
   theme: string
+  imageAi?: boolean
   image?: string
   description: string
   nutrition?: NutritionValues

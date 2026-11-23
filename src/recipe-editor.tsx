@@ -103,12 +103,13 @@ export function RecipeEditor({ recipe, busy, publicTerms, privateTerms, onSave, 
       if (!file) return
       setImageError('')
       setLoadingImage(true)
-      try { setField('image', await resizeRecipeImage(file)) }
+      try { const image = await resizeRecipeImage(file); setDraft(current => ({ ...current, image, imageAi: false })) }
       catch (error) { setImageError(error instanceof Error ? error.message : 'De afbeelding kon niet worden geopend.') }
       finally { setLoadingImage(false) }
     }}/></label>
-    {draft.image && <><img className="recipe-upload-preview" src={draft.image} alt="Voorbeeld receptafbeelding"/>
-      <button type="button" className="button" disabled={loadingImage} onClick={() => setField('image', undefined)}>Afbeelding verwijderen</button></>}
+    {draft.image && <><div className="recipe-upload-preview-wrap"><img className="recipe-upload-preview" src={draft.image} alt="Voorbeeld receptafbeelding"/>{draft.imageAi && <span className="image-ai-tag"><span aria-hidden="true">✧</span><span>Door AI gemaakt of aangepast</span></span>}</div>
+      <button type="button" className="button" disabled={loadingImage} onClick={() => setDraft(current => ({ ...current, image: undefined, imageAi: false }))}>Afbeelding verwijderen</button>
+      <label className="check-row"><input type="checkbox" checked={draft.imageAi ?? false} disabled={busy || loadingImage} onChange={event => setField('imageAi', event.target.checked)}/><span>Deze afbeelding is door AI gemaakt of aangepast</span></label></>}
     {imageError && <p className="alert" role="alert">{imageError}</p>}
     <label>Receptnaam<input required maxLength={100} value={draft.title} onChange={event => setField('title', event.target.value)}/></label>
     <label>Ondertitel<input maxLength={160} value={draft.subtitle} onChange={event => setField('subtitle', event.target.value)}/></label>

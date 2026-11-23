@@ -239,7 +239,7 @@ function Settings({ busy, error, restore, clearDatabase, close }: {
 }
 
 function RecipeArt({ recipe }: { recipe: Recipe }) {
-  return recipe.image ? <img className="recipe-photo" src={recipe.image} alt="" loading="lazy"/> : <svg className="recipe-placeholder" viewBox="0 0 120 80" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+  return recipe.image ? <span className="recipe-image"><img className="recipe-photo" src={recipe.image} alt="" loading="lazy"/>{recipe.imageAi && <span className="image-ai-tag" tabIndex={0} aria-label="Door AI gemaakt of aangepast" title="Door AI gemaakt of aangepast"><span aria-hidden="true">✧</span><span className="image-ai-text">Door AI gemaakt of aangepast</span></span>}</span> : <svg className="recipe-placeholder" viewBox="0 0 120 80" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
     <circle cx="60" cy="40" r="28"/>
     <circle cx="60" cy="40" r="19"/>
     <path d="M19 20v40m-6-40v12a6 6 0 0 0 12 0V20m77 40V20c-7 5-9 14-9 22h9"/>

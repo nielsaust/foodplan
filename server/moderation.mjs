@@ -147,12 +147,12 @@ export function createModeration(store) {
       const ingredients = { ...ingredientById, ...Object.fromEntries(terms.ingredients.map(term => [term.id, term])) }
       const tags = Object.fromEntries([...baseTags, ...terms.tags].map(term => [term.id, term]))
       validateRecipe(recipe, ingredients, tags)
-      const { id, title, subtitle, cuisine, description, minutes, theme, image, tagIds, amounts, steps, translations, source, nutrition } = recipe
+      const { id, title, subtitle, cuisine, description, minutes, theme, image, imageAi, tagIds, amounts, steps, translations, source, nutrition } = recipe
       const labels = tagIds ? tagIds.map(key => tags[key].name) : recipe.tags
       if (labels.some(name => !Object.values(tags).some(tag => nameKey(tag.name) === nameKey(name)))) {
         throw new InputError('Gebruik alleen publieke kenmerken.')
       }
-      const data = JSON.stringify({ id, title, subtitle, cuisine, description, minutes, theme, image, tagIds, amounts, steps, translations, source, nutrition, tags: labels })
+      const data = JSON.stringify({ id, title, subtitle, cuisine, description, minutes, theme, image, imageAi, tagIds, amounts, steps, translations, source, nutrition, tags: labels })
       if (!db.prepare("UPDATE recipe_publications SET recipe = ? WHERE id = ? AND status = 'approved'").run(data, id).changes) {
         throw new InputError('Dit recept is niet meer publiek.')
       }
@@ -208,9 +208,9 @@ export function createModeration(store) {
         for (const recipe of additions) {
           if (ingredientManagement.retiredIds().some(id => Object.hasOwn(recipe.amounts ?? {}, id))) throw new InputError('Deze catalogus bevat een samengevoegd ingrediënt. Werk eerst de broncatalogus bij.')
           validateRecipe(recipe, ingredients, tags)
-          const { id, title, subtitle, cuisine, description, minutes, theme, image, tagIds, amounts, steps, translations, source, nutrition } = recipe
+          const { id, title, subtitle, cuisine, description, minutes, theme, image, imageAi, tagIds, amounts, steps, translations, source, nutrition } = recipe
           const labels = tagIds ? tagIds.map(key => tags[key].name) : recipe.tags
-          insert.run(id, groupId, id, JSON.stringify({ id, title, subtitle, cuisine, description, minutes, theme, image, tagIds, amounts, steps, translations, source, nutrition, tags: labels }), Date.now())
+          insert.run(id, groupId, id, JSON.stringify({ id, title, subtitle, cuisine, description, minutes, theme, image, imageAi, tagIds, amounts, steps, translations, source, nutrition, tags: labels }), Date.now())
         }
         return { message: additions.length + ' geïmporteerd, ' + (selected.length - additions.length) + ' overgeslagen (al aanwezig).' }
       })

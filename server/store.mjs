@@ -108,6 +108,7 @@ export function validateRecipe(recipe, ingredients = ingredientById, tags = base
       Object.hasOwn(nutritionLabels, key) && Number.isFinite(value) && value >= 0 && value <= 10000))) &&
     Number.isInteger(recipe.minutes) && recipe.minutes >= 1 && recipe.minutes <= 600 &&
     ['gold', 'rose', 'green'].includes(recipe.theme) &&
+    (recipe.imageAi === undefined || typeof recipe.imageAi === 'boolean') &&
     (recipe.image === undefined || (typeof recipe.image === 'string' && recipe.image.length <= 140000 &&
       /^data:image\/webp;base64,[A-Za-z0-9+/]+={0,2}$/.test(recipe.image) &&
       Buffer.from(recipe.image.split(',')[1], 'base64').toString('ascii', 8, 12) === 'WEBP')) &&
@@ -220,9 +221,9 @@ function apply(state, action, publicTerms = emptyTerms) {
     case 'saveRecipe': {
       const recipe = prepareTerms(state, action.recipe, action.terms ?? emptyTerms, publicTerms)
       requireInput(!recipes.some(starter => starter.id === recipe.id) || Object.hasOwn(state.recipeEdits ?? {}, recipe.id))
-      const { image, id, title, subtitle, cuisine, description, minutes, theme, tags, tagIds, amounts, steps, translations, source, nutrition } = recipe
+      const { imageAi, image, id, title, subtitle, cuisine, description, minutes, theme, tags, tagIds, amounts, steps, translations, source, nutrition } = recipe
       state.recipeEdits = { ...state.recipeEdits, [id]: {
-        id, image, tagIds, translations, nutrition, title: title.trim(), subtitle: subtitle.trim(), cuisine: cuisine.trim(),
+        id, imageAi, image, tagIds, translations, nutrition, title: title.trim(), subtitle: subtitle.trim(), cuisine: cuisine.trim(),
         description: description.trim(), source: source?.trim() ?? source, minutes, theme,
         tags: [...new Set(tags.map(tag => tag.trim()))], amounts, steps: steps.map(step => step.trim()),
       } }
