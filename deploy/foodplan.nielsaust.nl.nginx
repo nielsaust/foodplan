@@ -1,8 +1,11 @@
+# Public pages and recipes are accessible to everyone.
+# The application authenticates all household and management API requests.
+auth_basic off;
+
 client_max_body_size 10m;
 
 location = /api/deploy {
     if ($scheme != https) { return 404; }
-    auth_basic off;
     resolver 127.0.0.11 valid=10s ipv6=off;
     set $foodplan_webhook http://foodplan-backend:8787;
     proxy_pass $foodplan_webhook;

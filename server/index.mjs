@@ -54,7 +54,6 @@ const server = createServer(async (request, response) => {
       return json(response, 200, { account: auth.session(request) ?? null })
     }
     if (path === '/api/catalog' && request.method === 'GET') {
-      if (!auth.session(request)) throw new AuthError(401, 'Log in om verder te gaan.')
       return json(response, 200, { recipes: auth.moderation.publicRecipes(), terms: store.publicTerms() })
     }
     const authRoute = path.startsWith('/api/auth/') ? path.slice('/api/auth/'.length) : ''

@@ -42,7 +42,9 @@ Gebruik optioneel `FOODPLAN_HOUSEHOLD_NAME` voor de groepsnaam en `FOODPLAN_MEMB
 
 Laat de hostnaam naar de VPS wijzen en controleer of de bestaande nginx-proxy en ACME-companion actief zijn. De standaard Compose-configuratie sluit aan op het externe netwerk `nginx-proxy` en geeft de hostnaam en interne poort door aan de proxy.
 
-Scherm de hostnaam vóór de eerste start af in nginx-proxy, bijvoorbeeld met het hostspecifieke htpasswd-bestand. De app gebruikt één gedeeld huishouden en heeft geen eigen aanmelding. Controleer bij de eerste deploy zowel HTTPS als de toegangscontrole.
+De website en goedgekeurde publieke recepten zijn zonder account toegankelijk. Weekplanning toont bezoekers een algemene kennismaking; Boodschappen, Huishouden en Privérecepten leggen de functie uit met een knop om een account aan te maken. Persoonlijke planning, recepten, beoordelingen en beheer vereisen een ingelogd account. De app controleert deze toegang ook op de API.
+
+Gebruik de hostconfiguratie uit `deploy/foodplan.nielsaust.nl.nginx`: `auth_basic off` maakt de publieke website bereikbaar wanneer nginx-proxy nog een htpasswd-configuratie heeft. Controleer bij de eerste deploy HTTPS en dat `/api/state` en `/api/backup` zonder sessie HTTP 401 teruggeven.
 
 ```sh
 cd /srv/docker-projects/foodplan
@@ -70,7 +72,7 @@ De VPS verwerkt alleen ondertekende pushes naar `main` van `nielsaust/foodplan`.
 
 1. Genereer een aparte sleutel met `openssl rand -hex 32` en zet die in de afgeschermde VPS-`.env` als `DEPLOY_WEBHOOK_SECRET`. Gebruik dezelfde waarde in GitHub bij **Settings → Webhooks → Add webhook**. Houd de sleutel buiten Git.
 2. Installeer de twee bestanden `deploy/foodplan-deploy.path` en `deploy/foodplan-deploy.service` in `/etc/systemd/system/`. Houd de checkout en de `.env` onder beheer van root, omdat systemd Docker als root aanroept. Voer `sudo systemctl daemon-reload` en `sudo systemctl enable --now foodplan-deploy.path` uit.
-3. Plaats de inhoud van `deploy/foodplan.nielsaust.nl.nginx` in de hostspecifieke configuratie `/etc/nginx/vhost.d/foodplan.nielsaust.nl` van de bestaande proxy. De exacte webhookroute gebruikt de GitHub-handtekening voor authenticatie. De rest van de site blijft onder de toegangscontrole van de proxy vallen. Controleer de proxyconfiguratie met `nginx -t` in de proxycontainer en herlaad die daarna.
+3. Plaats de inhoud van `deploy/foodplan.nielsaust.nl.nginx` in de hostspecifieke configuratie `/etc/nginx/vhost.d/foodplan.nielsaust.nl` van de bestaande proxy. De exacte webhookroute gebruikt de GitHub-handtekening voor authenticatie. De publieke website gebruikt geen proxylogin; de app beveiligt de privéfuncties met accounts. Controleer de proxyconfiguratie met `nginx -t` in de proxycontainer en herlaad die daarna.
 4. Start de app opnieuw met `sudo docker compose up --build -d --wait`. Configureer de webhook met payload-URL `https://foodplan.nielsaust.nl/api/deploy`, contenttype `application/json`, SSL-verificatie aan en alleen het **push**-event. Controleer de ping in GitHub en volg de eerste deploy met `sudo journalctl -u foodplan-deploy.service -f`.
 
 Een geldige push krijgt HTTP 202 zodra de deploy klaarstaat. De uitkomst van de deploy staat in het VPS-log. Na een mislukte deploy kun je dezelfde GitHub-delivery opnieuw versturen of `sudo systemctl start foodplan-deploy.service` uitvoeren.
@@ -172,3 +174,5 @@ apart in SQLite bewaard en vallen onder een volledige databaseback-up, niet onde
 JSON-back-up van de planningsgegevens.
 
 Tests voor beoordelingen: `node --experimental-strip-types --test server/ratings.test.mjs`.
+
+Tests voor publieke toegang en afgeschermde huishoudgegevens: `node --experimental-strip-types --test server/public-access.test.mjs` (voer eerst `npm run build` uit voor de paginacontroles).

@@ -121,7 +121,7 @@ function Stars({ value }: { value: number }) {
   return <span className="rating-stars" aria-hidden="true">{[1, 2, 3, 4, 5].map(star => <span className="rating-star" key={star}>☆<span style={{ width: Math.max(0, Math.min(1, value - star + 1)) * 100 + '%' }}>★</span></span>)}</span>
 }
 
-function RecipeRating({ id, privateRecipe, editable = false, canVote = true }: { id: string; privateRecipe?: boolean; editable?: boolean; canVote?: boolean }) {
+function RecipeRating({ id, privateRecipe, editable = false, canVote = false }: { id: string; privateRecipe?: boolean; editable?: boolean; canVote?: boolean }) {
   const context = useContext(RatingContext)
   const [householdOnly, setHouseholdOnly] = useState(false)
   const [info, setInfo] = useState(false)
@@ -150,11 +150,10 @@ function RecipeRating({ id, privateRecipe, editable = false, canVote = true }: {
   </div>
   return <div className={'recipe-rating ' + (isPrivate ? 'rating-private' : 'rating-public')}>
     <div className="rating-summary">
-      {isPrivate ? <span className="rating-score" aria-label={label + ': ' + summary}><Stars value={average}/><span>{summary}</span></span> :
-        <button type="button" className="rating-score" aria-label={label + ': ' + summary + '. Toon ' + (local ? 'iedereen' : 'alleen het huishouden')} aria-pressed={householdOnly} onClick={() => setHouseholdOnly(value => !value)}><Stars value={average}/><span>{summary}</span></button>}
+      {isPrivate ? <span className="rating-score" aria-label={label + ': ' + summary}><Stars value={average}/><span>{editable ? summary : '(' + count + ')'}</span></span> :
+        <button type="button" className="rating-score" aria-label={label + ': ' + summary + '. Toon ' + (local ? 'iedereen' : 'alleen het huishouden')} aria-pressed={householdOnly} onClick={() => setHouseholdOnly(value => !value)}><Stars value={average}/><span>{editable ? summary : '(' + count + ')'}</span></button>}
       <button type="button" className="rating-info" aria-label="Informatie over beoordelingen" onClick={() => setInfo(true)}>i</button>
     </div>
-    <small className="rating-scope" aria-live="polite">{label}</small>
     {editable && canVote && voting}
     {info && <Dialog title="Beoordelingen" close={() => { setInfo(false); setMessage('') }}>
       <p>{isPrivate ? 'Dit is een privérecept. De groene sterren tonen het gemiddelde van de beoordelingen binnen jouw huishouden.' : 'De gele sterren tonen standaard het gemiddelde van alle stemmen, inclusief die van je huishouden. Tik op de sterren om te wisselen tussen iedereen en alleen je huishouden.'}</p>
@@ -1154,8 +1153,135 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
   </RatingContext.Provider>
 }
 
+
+const guestFeatures = {
+  boodschappen: {
+    icon: 'basket', eyebrow: 'Boodschappen', title: 'Je hoofd is geen boodschappenlijst.',
+    description: 'Kies wat je gaat eten. Aan tafel telt de ingrediënten uit je planning bij elkaar op. Scheelt een rondje door je hoofd. En door de supermarkt.',
+    benefits: ['Hoeveelheden op basis van wie er mee-eet.', 'Vink af wat je hebt en voeg losse boodschappen toe.', 'Kopieer je lijst als tekst, klaar voor onderweg.'],
+  },
+  huisgenoten: {
+    icon: 'people', eyebrow: 'Huishouden', title: 'Wie schuift er aan?',
+    description: 'De een eet mee, de ander is weg en iemand heeft altijd nét wat meer trek. Houd het bij op één plek, dan kloppen de porties ook.',
+    benefits: ['Geef per dag aan wie er mee-eet.', 'Stel voor iedere huisgenoot een eigen portiegrootte in.', 'Nodig huisgenoten uit om samen de planning bij te houden.'],
+  },
+  private: {
+    icon: 'book', eyebrow: 'Je eigen receptenboek', title: 'Dat ene succesrecept. Nu vindbaar.',
+    description: 'Een favoriet in je notities, een link in de groepsapp, een recept op papier. Geef ze een vaste plek in je eigen receptenboek.',
+    benefits: ['Voeg eigen recepten toe, ook met hulp van Claude of Codex.', 'Bewaar een publiek recept en pas het aan naar jouw smaak.', 'Plan je favorieten in en laat de ingrediënten meetellen op je lijst.'],
+  },
+}
+
+function GuestFeature({ feature, register, nested = false }: { feature: typeof guestFeatures[keyof typeof guestFeatures]; register: () => void; nested?: boolean }) {
+  const Heading = nested ? 'h2' : 'h1'
+  return <section className="panel guest-feature">
+    <div className="eyebrow"><Icon name={feature.icon}/> {feature.eyebrow}</div>
+    <Heading>{feature.title}</Heading><p>{feature.description}</p>
+    <ul className="guest-benefits">{feature.benefits.map(text => <li key={text}><Icon name="check"/><span>{text}</span></li>)}</ul>
+    <button className="button primary" onClick={register}>Maak een account aan</button>
+    <p className="guest-note">Met een account bewaar je alles voor jouw huishouden.</p>
+  </section>
+}
+
+function GuestApp({ authenticate }: { authenticate: (screen: 'login' | 'register') => void }) {
+  const [tab, setTab] = useState<Tab>(() => pageFromPath(window.location.pathname.replace(/\/$/, '') || '/'))
+  const [scope, setScope] = useState<'public' | 'private'>('public')
+  const [catalog, setCatalog] = useState<{ recipes: Recipe[]; terms: Terms }>()
+  const [error, setError] = useState('')
+  const [attempt, setAttempt] = useState(0)
+  const [selected, setSelected] = useState<string[]>([])
+  const [modal, setModal] = useState<RecipeModal | undefined>(recipeFromLocation)
+  useEffect(() => {
+    const restore = () => { setTab(pageFromPath(window.location.pathname.replace(/\/$/, '') || '/')); setModal(recipeFromLocation()) }
+    window.addEventListener('popstate', restore)
+    return () => window.removeEventListener('popstate', restore)
+  }, [])
+  useEffect(() => {
+    const controller = new AbortController()
+    setError('')
+    void fetch('/api/catalog', { signal: controller.signal }).then(async response => {
+      if (!response.ok) throw new Error('De recepten konden niet worden geladen. Probeer het nog eens.')
+      setCatalog(await response.json())
+    }).catch(failure => { if (!controller.signal.aborted) setError(failure.message) })
+    return () => controller.abort()
+  }, [attempt])
+  const register = () => authenticate('register')
+  const navigate = (next: Tab) => {
+    window.history.pushState(null, '', pagePaths[next])
+    setTab(next); setModal(undefined); window.scrollTo(0, 0)
+  }
+  const openRecipe = (recipe: Recipe) => {
+    window.history.pushState({ guestRecipe: true }, '', recipePath(recipe.id))
+    setModal({ kind: 'recipe', id: recipe.id })
+  }
+  const closeRecipe = () => {
+    if (window.history.state?.guestRecipe) window.history.back()
+    else { window.history.replaceState(null, '', pagePaths.recepten); setModal(undefined) }
+  }
+  const recipe = catalog?.recipes.find(item => item.id === modal?.id)
+  const publicState: State = { household: { id: '', name: '' }, people: [], meals: [], attendance: {}, checked: [], extras: [] }
+  const ingredients = Object.fromEntries([...publicBaseTerms.ingredients, ...(catalog?.terms.ingredients ?? [])].map(item => [item.id, item]))
+  return <>
+    <header className="site-header guest-header"><div className="header-inner">
+      <button className="wordmark" aria-label="Aan tafel, naar weekplanning" onClick={() => navigate('planning')}><span className="brand-icon"><Icon name="leaf" size={23}/></span><span className="brand-name">Aan tafel<span className="brand-dot">.</span></span></button>
+      <nav aria-label="Hoofdnavigatie">{tabs.map(item => <button key={item.id} className={tab === item.id ? 'nav-current' : ''} aria-current={tab === item.id ? 'page' : undefined} onClick={() => navigate(item.id)}><Icon name={item.icon}/><span>{item.label}</span></button>)}</nav>
+      <button className="button guest-login" onClick={() => authenticate('login')}>Inloggen</button>
+    </div></header>
+    <main className="guest-main">
+      {tab === 'planning' && <>
+        <section className="hero guest-hero"><div className="hero-copy"><div className="eyebrow"><Icon name="leaf" size={16}/> Minder regelen, lekker eten</div>
+          <h1>Een vol leven.<br/>Een leeg bord?<br/>Dat kan slimmer.</h1>
+          <p>Met Aan tafel kies je wat je eet, plan je wie er aanschuift en rolt je boodschappenlijst uit je weekmenu. Zo is het avondeten alvast geregeld.</p>
+          <div className="guest-actions"><button className="button hero-button" onClick={register}>Maak een account aan</button><button className="button guest-browse" onClick={() => navigate('recepten')}>Eerst even recepten kijken</button></div>
+        </div><Plate theme="green" hero/></section>
+        <section className="guest-intro" aria-labelledby="guest-intro-title"><h2 id="guest-intro-title">Van ‘wat eten we?’ naar ‘aan tafel!’</h2><p>Je hoeft niet elke dag opnieuw het wiel uit te vinden. Of de pasta.</p>
+          <div className="guest-feature-grid">{[
+            { icon: 'calendar', title: 'Een plan voor je week', text: 'Geef je recepten een dag. Uit eten of een kliekjesdag? Past er ook gewoon tussen.', tab: 'planning' as Tab },
+            { icon: 'basket', title: 'Een lijst die meedenkt', text: 'Ingrediënten bij elkaar, hoeveelheden opgeteld. Jij hoeft alleen nog af te vinken.', tab: 'boodschappen' as Tab },
+            { icon: 'people', title: 'Precies genoeg op tafel', text: 'Wie eet er mee en hoeveel? Stem je porties af op de mensen aan tafel.', tab: 'huisgenoten' as Tab },
+          ].map(item => <article className="panel" key={item.title}><Icon name={item.icon} size={26}/><h3>{item.title}</h3><p>{item.text}</p><button className="button text" onClick={() => item.tab === 'planning' ? register() : navigate(item.tab)}>{item.tab === 'planning' ? 'Mijn week plannen' : 'Bekijk hoe het werkt'}</button></article>)}</div>
+        </section>
+        <section className="panel guest-recipe-invite"><div><h2>Begin maar met iets lekkers.</h2><p>Onze publieke recepten zijn er voor iedereen. Ook zonder account.</p></div><button className="button" onClick={() => navigate('recepten')}>Bekijk de recepten</button></section>
+      </>}
+      {tab === 'recepten' && <>
+        <div className="page-heading"><div className="eyebrow"><Icon name="book" size={16}/> Het receptenboek</div><h1>Wat wordt het vanavond?</h1><p>Kijk rond, filter op wat bij je past en duik de keuken in. Geen account nodig.</p></div>
+        <div className="form-row recipe-scopes" role="group" aria-label="Receptverzameling"><button className={'button ' + (scope === 'public' ? 'primary' : '')} aria-pressed={scope === 'public'} onClick={() => setScope('public')}>Publieke recepten</button><button className={'button ' + (scope === 'private' ? 'primary' : '')} aria-pressed={scope === 'private'} onClick={() => setScope('private')}>Privérecepten van je groep</button></div>
+        {scope === 'private' ? <GuestFeature nested feature={guestFeatures.private} register={register}/> : <>
+          {error ? <div className="alert" role="alert">{error}<button className="button" onClick={() => setAttempt(value => value + 1)}>Probeer opnieuw</button></div> : !catalog ? <p className="empty" role="status">Recepten laden…</p> : <RecipeCards recipes={catalog.recipes} onOpen={openRecipe} filters={{ selected, setSelected, reset: () => setSelected([]) }}/>}
+          <aside className="panel guest-recipe-invite"><div><h2>Lekker? Geef het een plek in je week.</h2><p>Met een account plan je recepten, bewaar je eigen varianten en maak je je boodschappenlijst.</p></div><button className="button primary" onClick={register}>Maak een account aan</button></aside>
+        </>}
+      </>}
+      {(tab === 'boodschappen' || tab === 'huisgenoten') && <GuestFeature feature={guestFeatures[tab]} register={register}/>}
+      {tab === 'beheer' && <section className="panel guest-feature"><h1>Beheer</h1><p>Dit deel is voor beheerders van Aan tafel. Log in met je beheeraccount om verder te gaan.</p><button className="button primary" onClick={() => authenticate('login')}>Inloggen</button></section>}
+    </main>
+    <footer className="site-footer"><Icon name="leaf" size={16}/> Minder geregel. Meer aan tafel.</footer>
+    {modal && <Dialog title={recipe?.title ?? 'Recept'} close={closeRecipe} printable={!!recipe} desktopFullscreen={modal.desktopFullscreen} toggleFullscreen={recipe ? () => {
+      const next = !modal.desktopFullscreen
+      const url = new URL(window.location.href)
+      if (next) url.searchParams.set('view', 'fullscreen'); else url.searchParams.delete('view')
+      window.history.replaceState(window.history.state, '', url)
+      setModal({ ...modal, desktopFullscreen: next })
+    } : undefined}>
+      {recipe ? <><RecipeDetail recipe={recipe} state={publicState} ingredients={ingredients} unitSystem="metric" canPlan={false} busy={false} save={async () => false} close={closeRecipe}/><aside className="guest-detail-cta"><h3>Van lekker idee naar geregeld avondeten.</h3><p>Maak een account om dit recept te plannen, als eigen variant te bewaren of te beoordelen. De ingrediënten tellen meteen mee op je boodschappenlijst.</p><button className="button primary" onClick={register}>Maak een account aan</button></aside></> : error ? <p className="alert" role="alert">{error}<button className="button" onClick={() => setAttempt(value => value + 1)}>Probeer opnieuw</button></p> : <p role="status">{catalog ? 'Dit recept is niet publiek beschikbaar. Bekijk de publieke recepten voor iets anders lekkers.' : 'Recept laden…'}</p>}
+    </Dialog>}
+  </>
+}
+
 function Root() {
   const [account, setAccount] = useState<Account | null>()
+  const readAuthScreen = () => new URLSearchParams(window.location.search).get('account')
+  const [authScreen, setAuthScreen] = useState(readAuthScreen)
+  useEffect(() => {
+    const restore = () => setAuthScreen(readAuthScreen())
+    window.addEventListener('popstate', restore)
+    return () => window.removeEventListener('popstate', restore)
+  }, [])
+  function showAuth(screen: 'login' | 'register' | null) {
+    const url = new URL(window.location.href)
+    if (screen) url.searchParams.set('account', screen); else url.searchParams.delete('account')
+    window.history.pushState(window.history.state, '', url)
+    setAuthScreen(screen)
+  }
   const [error, setError] = useState('')
   async function refresh() {
     setError('')
@@ -1163,6 +1289,12 @@ function Root() {
       const response = await fetch('/api/auth/session')
       if (!response.ok) throw new Error()
       const result: { account: Account | null } = await response.json()
+      if (result.account) {
+        const url = new URL(window.location.href)
+        url.searchParams.delete('account')
+        window.history.replaceState(window.history.state, '', url)
+        setAuthScreen(null)
+      }
       setAccount(result.account)
     } catch {
       setError('De server is niet bereikbaar.')
@@ -1171,7 +1303,11 @@ function Root() {
   useEffect(() => { void refresh() }, [])
   if (error) return <main><p className="alert" role="alert">{error}</p><button className="button" onClick={refresh}>Probeer opnieuw</button></main>
   if (account === undefined) return <main><p role="status">Aan tafel laden…</p></main>
-  if (!account || hasAccountLink()) return <AccountScreen refresh={refresh} signedIn={!!account}/>
+  if (hasAccountLink() || (!account && (authScreen === 'login' || authScreen === 'register'))) return <AccountScreen key={authScreen} refresh={refresh} signedIn={!!account} initialScreen={authScreen === 'register' ? 'register' : 'login'} close={() => {
+    if (hasAccountLink()) window.history.replaceState(null, '', window.location.pathname + window.location.search)
+    showAuth(null)
+  }}/>
+  if (!account) return <GuestApp authenticate={showAuth}/>
   return <App key={account.id} account={account} onExpired={() => setAccount(null)}/>
 }
 

@@ -7,7 +7,7 @@ import { Icon } from './visuals'
 export type Account = { id: string; email: string; name: string; role: 'owner' | 'member'; groupId: string; personId: string; superuser: boolean; unitSystem: UnitSystem; dietPreferences: string[] }
 type Screen = 'login' | 'register' | 'forgot' | 'accept' | 'reset' | 'accept-superuser'
 const titles: Record<Screen, string> = {
-  login: 'Inloggen', register: 'Aanmelden', forgot: 'Wachtwoord vergeten',
+  login: 'Inloggen', register: 'Account aanmaken', forgot: 'Wachtwoord vergeten',
   'accept-superuser': 'Beheeruitnodiging accepteren', accept: 'Account activeren', reset: 'Nieuw wachtwoord kiezen',
 }
 
@@ -28,9 +28,9 @@ function mailLink(): { action: 'accept' | 'reset' | 'accept-superuser'; token: s
 }
 export const hasAccountLink = () => !!mailLink()
 
-export function AccountScreen({ refresh, signedIn }: { refresh: () => Promise<void>; signedIn: boolean }) {
+export function AccountScreen({ refresh, signedIn, initialScreen = 'login', close }: { refresh: () => Promise<void>; signedIn: boolean; initialScreen?: 'login' | 'register'; close?: () => void }) {
   const [link, setLink] = useState(mailLink)
-  const [screen, setScreen] = useState<Screen>(link?.action ?? 'login')
+  const [screen, setScreen] = useState<Screen>(link?.action ?? initialScreen)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
@@ -65,9 +65,10 @@ export function AccountScreen({ refresh, signedIn }: { refresh: () => Promise<vo
   }
   return <main className="account-page">
     <section className="panel account-panel">
+      {close && <button className="button text" onClick={close}>Terug naar de website</button>}
       <div className="eyebrow"><Icon name="leaf" size={18}/> Aan tafel</div>
       <h1>{titles[screen]}</h1>
-      {screen === 'register' && <p>Maak je eigen groep aan. Je krijgt een link om je e-mailadres te bevestigen en een wachtwoord te kiezen.</p>}
+      {screen === 'register' && <p>Je weekmenu, recepten en boodschappen op één plek. Maak je huishouden aan; je krijgt per e-mail een link om je account te activeren en een wachtwoord te kiezen.</p>}
       {screen === 'forgot' && <p>Vraag een link aan om een nieuw wachtwoord te kiezen.</p>}
       {screen === 'accept' && <p>Rond je aanmelding of uitnodiging af met een wachtwoord.</p>}
       <form key={screen} onSubmit={submit}>
@@ -82,7 +83,7 @@ export function AccountScreen({ refresh, signedIn }: { refresh: () => Promise<vo
       {message && <p role="status">{message}</p>}
       <div className="account-links">
         {screen === 'login' ? <>
-          <button className="button text" onClick={() => show('register')}>Aanmelden</button>
+          <button className="button text" onClick={() => show('register')}>Account aanmaken</button>
           <button className="button text" onClick={() => show('forgot')}>Wachtwoord vergeten?</button>
         </> : <button className="button text" onClick={async () => {
           show('login')
