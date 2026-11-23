@@ -974,3 +974,6 @@ button.rating-score { cursor: pointer; }
 
 .recipe-upload-preview-wrap { position: relative; width: min(100%, 360px); }
 .recipe-upload-preview-wrap .recipe-upload-preview { width: 100%; }
+
+.recipe-add-methods { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 0 0 20px; }
+.recipe-add-methods .button { justify-content: center; }

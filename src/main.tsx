@@ -181,6 +181,13 @@ function Settings({ busy, error, restore, clearDatabase, close }: {
         dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/Amsterdam',
       }).format(new Date(__BUILD_TIMESTAMP__))}
     </time></p>}
+    <h3>App vernieuwen</h3>
+    <p>Laad de nieuwste versie van de app. Niet-opgeslagen wijzigingen gaan verloren.</p>
+    <button type="button" className="button" disabled={pending} onClick={() => {
+      const url = new URL(window.location.href)
+      url.searchParams.set('_refresh', Date.now().toString())
+      window.location.replace(url.href)
+    }}>App volledig vernieuwen</button>
     <h3>Database exporteren</h3>
     <p>Download een JSON-back-up van je recepten, planning, huisgenoten en boodschappen.</p>
     <a className="button backup-link" href="/api/backup" download>Download back-up</a>
@@ -938,7 +945,8 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
     setModal(undefined)
   }
   const openDay = (date: string) => setModal({ kind: 'day', date })
-  const newRecipe = () => { setCatalogScope('private'); setModal({ kind: 'edit', isNew: true, recipe: {
+  const [addMethod, setAddMethod] = useState<'manual' | 'ai'>('manual')
+  const newRecipe = () => { setAddMethod('manual'); setCatalogScope('private'); setModal({ kind: 'edit', isNew: true, recipe: {
     id: newId(), title: '', subtitle: '', cuisine: '', description: '', source: null, minutes: 30, tags: [], theme: 'green', amounts: {}, steps: [''],
   } }) }
 
@@ -1042,7 +1050,6 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
           </article>)}
           {!state.people.length && <p>Er zijn nog geen huisgenoten.</p>}
         </section>
-        <RecipeImport key={account.groupId}/>
       </>}
       {tab === 'beheer' && account.superuser && <AdminPage revision={adminRevision} accountId={account.id} groupId={account.groupId} openRecipe={(review, status) => showRecipe({
         kind: 'recipe', id: review.recipe.id, publicRecipe: review.recipe, reviewIngredients: review.ingredients, reviewStatus: status,
@@ -1104,7 +1111,14 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
             showRecipe({ kind: 'recipe', id: copyId })
           }
         } : undefined}/>}
-      {modal.kind === 'edit' && <RecipeEditor publicTerms={publicTerms} privateTerms={modal.publicEdit ? emptyTerms : privateTerms} publicOnly={modal.publicEdit} recipe={modal.recipe} busy={busy || savingPublic} cancel={() => {
+      {modal.kind === 'edit' && modal.isNew && <>
+        <div className="recipe-add-methods" role="group" aria-label="Manier van toevoegen">
+          <button type="button" className={'button ' + (addMethod === 'manual' ? 'primary' : '')} aria-pressed={addMethod === 'manual'} onClick={() => setAddMethod('manual')}>Handmatig</button>
+          <button type="button" className={'button ' + (addMethod === 'ai' ? 'primary' : '')} aria-pressed={addMethod === 'ai'} onClick={() => setAddMethod('ai')}>Met AI assistent</button>
+        </div>
+        <div hidden={addMethod !== 'ai'}><RecipeImport/></div>
+      </>}
+      {modal.kind === 'edit' && <div hidden={!!modal.isNew && addMethod !== 'manual'}><RecipeEditor publicTerms={publicTerms} privateTerms={modal.publicEdit ? emptyTerms : privateTerms} publicOnly={modal.publicEdit} recipe={modal.recipe} busy={busy || savingPublic} cancel={() => {
         setError('')
         if (modal.isNew) close()
         else if (modal.publicEdit) showRecipe({ kind: 'recipe', id: modal.recipe.id, publicRecipe: modal.recipe })
@@ -1126,7 +1140,7 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
           return
         }
         if (await save({ type: 'saveRecipe', recipe, terms })) openRecipe(recipe, modal.date)
-      }}/>}
+      }}/></div>}
       {modal.kind === 'day' && <div className="day-editor">
         <section className="day-attendance"><h3>Mee-eters</h3>
         <p>Vink aan wie er mee-eet.</p>

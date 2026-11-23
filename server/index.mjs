@@ -17,7 +17,7 @@ function groupSnapshot(groupId, snapshot = store.read(groupId)) {
   return { ...snapshot, state: { ...store.withCatalog(snapshot.state), recipeRatings: ratings.snapshot(groupId), linkedPeople: auth.linkedPeople(groupId), ownerPeople: auth.ownerPeople(groupId) } }
 }
 const root = resolve('dist')
-const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' }
+const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.webmanifest': 'application/manifest+json' }
 const json = (response, status, data, headers = {}) => {
   response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers })
   response.end(JSON.stringify(data))
@@ -112,7 +112,7 @@ const server = createServer(async (request, response) => {
     if (request.method !== 'GET' || !file.startsWith(root + sep) || !statSync(file, { throwIfNoEntry: false })?.isFile()) {
       return json(response, 404, { error: 'Pagina niet gevonden.' })
     }
-    response.writeHead(200, { 'Content-Type': mime[extname(file)] || 'application/octet-stream' })
+    response.writeHead(200, { 'Content-Type': mime[extname(file)] || 'application/octet-stream', ...(extname(file) === '.html' ? { 'Cache-Control': 'no-store' } : {}) })
     const stream = createReadStream(file)
     stream.on('error', () => response.destroy())
     stream.pipe(response)

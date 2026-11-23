@@ -101,7 +101,7 @@ Offline synchronisatie wordt nog niet ondersteund.
 
 ## Recept toevoegen met een agent
 
-Onder **Huishouden → Recept toevoegen met Claude of Codex** kan ieder ingelogd
+Onder **Recepten → Recept toevoegen → Met AI assistent** kan ieder ingelogd
 huishoudlid een tijdelijke instructie maken. Kopieer deze naar de agent en voeg
 een receptlink of omschrijving toe. De instructie bevat het JSON-formaat, de
 verplichte gegevens, regels voor doorvragen en het exacte vervaltijdstip.

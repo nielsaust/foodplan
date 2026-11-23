@@ -14,13 +14,13 @@ export function RecipeImport() {
   }, [])
   const expired = !!link && now >= Date.parse(link.expiresAt)
   const instruction = link ? recipeImportInstructions(link.url, link.expiresAt) : ''
-  return <details className="panel people-panel recipe-import">
-    <summary>Recept toevoegen met Claude of Codex</summary>
+  return <section className="recipe-import">
     <div className="recipe-import-content">
-    <p className="recipe-import-intro">Geef Claude of Codex een receptlink of omschrijving. Je agent werkt het recept uit en voegt het toe aan de privérecepten van je huishouden.</p>
+    <p className="recipe-import-intro">Gebruik een AI assistent met toegang tot een terminal of een tool om HTTP POST-verzoeken te versturen, bijvoorbeeld Codex of Claude Code met die toegang ingeschakeld. De assistent moet deze app ook kunnen bereiken. Alleen chatten of links lezen is niet voldoende. Vraag je assistent vooraf of die het recept rechtstreeks kan versturen.</p>
+    <p>Werk je met een lokale versie van deze app? Gebruik dan een assistent op dezelfde computer met netwerktoegang tot de app. Een assistent in de cloud kan jouw localhost-adres niet bereiken.</p>
     <ol className="recipe-import-steps">
       <li><strong>Kopieer de instructie</strong><span>Maak hieronder een tijdelijke instructie en kopieer die.</span></li>
-      <li><strong>Geef je recept mee</strong><span>Plak de instructie in Claude of Codex, samen met een receptlink of omschrijving.</span></li>
+      <li><strong>Geef je recept mee</strong><span>Plak de instructie bij je AI assistent, samen met een receptlink of omschrijving.</span></li>
       <li><strong>Laat je agent het toevoegen</strong><span>Beantwoord eventuele vervolgvragen. Het recept verschijnt daarna automatisch bij je privérecepten.</span></li>
     </ol>
     <div className="recipe-import-notice"><Icon name="clock"/><p><strong>15 minuten geldig · één recept</strong><span>Deel de instructie alleen met je agent. Een nieuwe instructie maakt je vorige link ongeldig.</span></p></div>
@@ -62,5 +62,5 @@ export function RecipeImport() {
     </>}
     {error && <p className="alert" role="alert">{error}</p>}
     </div>
-  </details>
+  </section>
 }
