@@ -161,3 +161,14 @@ inclusief hun publieke termen. Importeer op de bestemming als superuser;
 recepten met hetzelfde ID worden overgeslagen. De Docker-volume met SQLite
 blijft per omgeving apart. Voor imports boven de standaardlimiet van nginx
 moet de VPS de bijgewerkte hostconfiguratie gebruiken (10 MB).
+
+Huisgenoten met een account kunnen recepten één tot vijf sterren geven en hun eigen
+stem wijzigen. Gele sterren bij publieke recepten tonen het gemiddelde van iedereen;
+tik erop om alleen het huishoudgemiddelde te zien. Groene sterren bij privérecepten
+gebruiken uitsluitend stemmen uit het huishouden. De informatieknop naast de sterren
+opent uitleg en de stemknoppen; bij privérecepten staan daar ook de scores per huisgenoot.
+Individuele stemmen van andere huishoudens worden niet gedeeld. Beoordelingen worden
+apart in SQLite bewaard en vallen onder een volledige databaseback-up, niet onder de
+JSON-back-up van de planningsgegevens.
+
+Tests voor beoordelingen: `node --experimental-strip-types --test server/ratings.test.mjs`.

@@ -7,7 +7,9 @@ import type { UnitSystem } from './units.ts'
 export type Person = { id: string; name: string; factor: number }
 export type Meal = { date: string; recipeId: string; text?: string; leftoverOf?: string }
 export type Extra = { id: string; name: string; checked: boolean }
+export type RecipeRating = { total: number; count: number; household: Record<string, number> }
 export type State = {
+  recipeRatings?: { public: Record<string, RecipeRating>; private: Record<string, RecipeRating> }
   household: { id: string; name: string }
   includeStarterRecipes?: boolean
   linkedPeople?: string[]
@@ -35,6 +37,7 @@ export const householdIngredients = (state: State) => Object.fromEntries(Object.
   .filter(([id]) => !state.retiredIngredientIds?.includes(id)))
 
 export type Action =
+  | { type: 'rateRecipe'; recipeId: string; privateRecipe: boolean; score: number }
   | { type: 'renameHousehold'; name: string }
   | { type: 'clearDatabase' }
   | { type: 'copyPublicRecipe'; id: string; copyId: string }

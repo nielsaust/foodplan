@@ -6,13 +6,15 @@ import { today } from '../domain/planning.ts'
 import { receiveDeployWebhook } from './deploy-webhook.mjs'
 import { AuthError, createAuth, requireOwner } from './auth.mjs'
 import { InputError, openStore } from './store.mjs'
+import { createRatings } from './ratings.mjs'
 import { createRecipeImport } from './recipe-import.mjs'
 
 const store = openStore(process.env.DATABASE_PATH || 'data/aan-tafel.sqlite')
 const auth = createAuth(store)
 const recipeImport = createRecipeImport(store)
+const ratings = createRatings(store)
 function groupSnapshot(groupId, snapshot = store.read(groupId)) {
-  return { ...snapshot, state: { ...store.withCatalog(snapshot.state), linkedPeople: auth.linkedPeople(groupId), ownerPeople: auth.ownerPeople(groupId) } }
+  return { ...snapshot, state: { ...store.withCatalog(snapshot.state), recipeRatings: ratings.snapshot(groupId), linkedPeople: auth.linkedPeople(groupId), ownerPeople: auth.ownerPeople(groupId) } }
 }
 const root = resolve('dist')
 const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' }
@@ -91,11 +93,20 @@ const server = createServer(async (request, response) => {
       if (!restore && action?.type === 'removePerson' && auth.linkedPeople(current.groupId).includes(action.id)) {
         throw new InputError('Deze huisgenoot heeft een gekoppeld account.')
       }
+      if (!restore && action?.type === 'rateRecipe') {
+        ratings.vote(current, action)
+        return json(response, 200, groupSnapshot(current.groupId))
+      }
       if (!restore && action?.type === 'copyPublicRecipe') {
         auth.moderation.copy(current.groupId, action)
         return json(response, 200, groupSnapshot(current.groupId))
       }
-      return json(response, 200, groupSnapshot(current.groupId, store.write(current.groupId, action, restore)))
+      const snapshot = store.transaction(() => {
+        const next = store.write(current.groupId, action, restore)
+        ratings.prune(current.groupId)
+        return next
+      })
+      return json(response, 200, groupSnapshot(current.groupId, snapshot))
     }
 
     const file = resolve(root, '.' + (isAppPath(path) ? '/index.html' : path))

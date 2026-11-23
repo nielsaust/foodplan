@@ -1,13 +1,13 @@
 import type { RefObject } from 'react'
 import { FileUpload } from './file-upload'
 import { cookingPortions } from '../domain/planning'
-import { pagePaths, pageFromPath, adminSections } from '../domain/navigation'
+import { pagePaths, pageFromPath, adminSections, recipeIdFromPath, recipePath } from '../domain/navigation'
 import { TermPicker } from './term-picker'
 import { nameKey } from '../domain/terms'
 import { emptyTerms, publicBaseTerms } from '../domain/terms'
 import type { Terms } from '../domain/terms'
 import type { UnitSystem } from '../domain/units'
-import { useEffect, useId, useRef, useState } from 'react'
+import { createContext, useContext, useEffect, useId, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { recipes as starterRecipes, dietTags, nutritionLabels, allergyTags, isAllergyTag } from '../domain/catalog'
@@ -28,7 +28,20 @@ declare const __BUILD_TIMESTAMP__: string | null
 
 type Snapshot = { state: State; revision: number }
 type Tab = 'planning' | 'recepten' | 'boodschappen' | 'huisgenoten' | 'beheer'
-type Modal = { kind: 'recipe'; id: string; date?: string; leftoverOf?: string; publicRecipe?: Recipe; reviewIngredients?: Record<string, Ingredient>; reviewStatus?: string } | { kind: 'day'; date: string } | { kind: 'edit'; recipe: Recipe; date?: string; isNew?: boolean; publicEdit?: boolean }
+type Modal = { kind: 'recipe'; id: string; date?: string; leftoverOf?: string; desktopFullscreen?: boolean; publicRecipe?: Recipe; reviewIngredients?: Record<string, Ingredient>; reviewStatus?: string } | { kind: 'day'; date: string } | { kind: 'edit'; recipe: Recipe; date?: string; isNew?: boolean; publicEdit?: boolean }
+type RecipeModal = Extract<Modal, { kind: 'recipe' }>
+function recipeFromLocation(): RecipeModal | undefined {
+  const url = new URL(window.location.href)
+  const id = recipeIdFromPath(url.pathname)
+  if (!id) return undefined
+  const saved = window.history.state?.recipeModal as RecipeModal | undefined
+  const validDate = (key: string) => {
+    const value = url.searchParams.get(key)
+    return value && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value)) ? value : undefined
+  }
+  return { ...(saved?.id === id ? saved : {}), kind: 'recipe', id,
+    date: validDate('date'), leftoverOf: validDate('leftoverOf'), desktopFullscreen: url.searchParams.get('view') === 'fullscreen' }
+}
 const tabs: { id: Tab; label: string; icon: string }[] = [
   { id: 'planning', label: 'Weekplanning', icon: 'calendar' },
   { id: 'recepten', label: 'Recepten', icon: 'book' },
@@ -85,20 +98,71 @@ function useHousehold(onExpired: () => void) {
   }
 }
 
-function Dialog({ title, children, close, printable, fullscreen }: { title: string; children: ReactNode; close: () => void; printable?: boolean; fullscreen?: boolean }) {
+function Dialog({ title, children, close, printable, fullscreen, desktopFullscreen, toggleFullscreen }: { title: string; children: ReactNode; close: () => void; printable?: boolean; fullscreen?: boolean; desktopFullscreen?: boolean; toggleFullscreen?: () => void }) {
   const titleId = useId()
   const ref = useRef<HTMLDialogElement>(null)
   useEffect(() => { ref.current?.showModal() }, [])
-  return <dialog className={printable ? "recipe-print-dialog mobile-fullscreen" : fullscreen ? "mobile-fullscreen" : undefined} ref={ref} aria-labelledby={titleId} onCancel={event => { if (event.target !== event.currentTarget) return; event.preventDefault(); close() }}
+  return <dialog className={[printable ? 'recipe-print-dialog mobile-fullscreen' : fullscreen ? 'mobile-fullscreen' : '', desktopFullscreen ? 'recipe-desktop-fullscreen' : ''].filter(Boolean).join(' ') || undefined} ref={ref} aria-labelledby={titleId} onCancel={event => { if (event.target !== event.currentTarget) return; event.preventDefault(); close() }}
     onClick={event => { if (event.target === event.currentTarget) close() }}>
     <div className="dialog-content">
       <div className="dialog-heading"><h2 id={titleId}>{title}</h2><div className="dialog-heading-actions">
         {printable && <button type="button" className="icon-button" aria-label="Afdrukken of opslaan als PDF" title="Print / PDF" onClick={() => window.print()}><Icon name="printer"/></button>}
+        {toggleFullscreen && <button type="button" className="icon-button desktop-fullscreen-toggle" aria-label={desktopFullscreen ? 'Verkleinen' : 'Volledig scherm'} title={desktopFullscreen ? 'Verkleinen' : 'Volledig scherm'} aria-pressed={!!desktopFullscreen} onClick={toggleFullscreen}><Icon name={desktopFullscreen ? 'minimize' : 'maximize'}/></button>}
         <button type="button" className="icon-button" aria-label="Sluiten" onClick={close}><Icon name="close"/></button>
       </div></div>
       {children}
     </div>
   </dialog>
+}
+
+const RatingContext = createContext<{ state?: State; personId: string; busy: boolean; save: (action: Action) => Promise<boolean> } | null>(null)
+
+function Stars({ value }: { value: number }) {
+  return <span className="rating-stars" aria-hidden="true">{[1, 2, 3, 4, 5].map(star => <span className="rating-star" key={star}>☆<span style={{ width: Math.max(0, Math.min(1, value - star + 1)) * 100 + '%' }}>★</span></span>)}</span>
+}
+
+function RecipeRating({ id, privateRecipe, editable = false, canVote = true }: { id: string; privateRecipe?: boolean; editable?: boolean; canVote?: boolean }) {
+  const context = useContext(RatingContext)
+  const [householdOnly, setHouseholdOnly] = useState(false)
+  const [info, setInfo] = useState(false)
+  const [message, setMessage] = useState('')
+  if (!context?.state) return null
+  const { state, personId, busy, save } = context
+  const isPrivate = privateRecipe ?? Object.hasOwn(state.recipeEdits ?? {}, id)
+  const entry = state.recipeRatings?.[isPrivate ? 'private' : 'public'][id]
+  const votes = entry?.household ?? {}
+  const householdScores = Object.values(votes)
+  const local = isPrivate || householdOnly
+  const count = local ? householdScores.length : entry?.count ?? 0
+  const total = local ? householdScores.reduce((sum, score) => sum + score, 0) : entry?.total ?? 0
+  const average = count ? total / count : 0
+  const label = local ? 'Huishouden' : 'Iedereen'
+  const summary = count ? average.toLocaleString('nl-NL', { maximumFractionDigits: 1 }) + ' van 5 · ' + count + (count === 1 ? ' stem' : ' stemmen') : 'Nog geen beoordelingen'
+  const ownScore = votes[personId]
+  const voting = <div className="rating-vote">
+    <strong>Jouw beoordeling{ownScore ? ': ' + ownScore + ' van 5' : ''}</strong>
+    <div className="rating-vote-stars" role="group" aria-label="Jouw beoordeling">{[1, 2, 3, 4, 5].map(score => <button type="button" key={score} disabled={busy || !state.people.some(person => person.id === personId)} aria-label={score + (score === 1 ? ' ster' : ' sterren')} aria-pressed={ownScore === score} onClick={async () => {
+      setMessage('')
+      if (await save({ type: 'rateRecipe', recipeId: id, privateRecipe: isPrivate, score })) setMessage('Je beoordeling is opgeslagen.')
+      else setMessage('Opslaan is niet gelukt. Probeer het opnieuw.')
+    }}>{score <= (ownScore ?? 0) ? '★' : '☆'}</button>)}</div>
+    <small role="status">{message}</small>
+  </div>
+  return <div className={'recipe-rating ' + (isPrivate ? 'rating-private' : 'rating-public')}>
+    <div className="rating-summary">
+      {isPrivate ? <span className="rating-score" aria-label={label + ': ' + summary}><Stars value={average}/><span>{summary}</span></span> :
+        <button type="button" className="rating-score" aria-label={label + ': ' + summary + '. Toon ' + (local ? 'iedereen' : 'alleen het huishouden')} aria-pressed={householdOnly} onClick={() => setHouseholdOnly(value => !value)}><Stars value={average}/><span>{summary}</span></button>}
+      <button type="button" className="rating-info" aria-label="Informatie over beoordelingen" onClick={() => setInfo(true)}>i</button>
+    </div>
+    <small className="rating-scope" aria-live="polite">{label}</small>
+    {editable && canVote && voting}
+    {info && <Dialog title="Beoordelingen" close={() => { setInfo(false); setMessage('') }}>
+      <p>{isPrivate ? 'Dit is een privérecept. De groene sterren tonen het gemiddelde van de beoordelingen binnen jouw huishouden.' : 'De gele sterren tonen standaard het gemiddelde van alle stemmen, inclusief die van je huishouden. Tik op de sterren om te wisselen tussen iedereen en alleen je huishouden.'}</p>
+      <p>Iedere huisgenoot met een account kan één tot vijf sterren geven. Iedere stem telt even zwaar. Je kunt je eigen beoordeling altijd wijzigen.</p>
+      {canVote && voting}
+      {isPrivate && <><h3>Beoordelingen van huisgenoten</h3><ul className="household-ratings">{state.people.map(person => <li key={person.id}><span>{person.name}{person.id === personId ? ' (jij)' : ''}</span>{votes[person.id] ? <span aria-label={votes[person.id] + ' van 5 sterren'}><Stars value={votes[person.id]}/></span> : <small>Nog niet beoordeeld</small>}</li>)}</ul></>}
+    </Dialog>}
+  </div>
 }
 
 function Settings({ busy, error, restore, clearDatabase, close }: {
@@ -244,8 +308,8 @@ function CookingMode({ title, steps, initialStep, close }: { title: string; step
   </dialog>
 }
 
-function RecipeDetail({ recipe, date, state, save, close, busy, edit, copy, publish, remove, publicRemove, archived, canPlan, ingredients, unitSystem }: {
-  recipe: Recipe; date?: string; state: State; save: (action: Action) => Promise<boolean>; close: () => void; busy: boolean; edit?: () => void; copy?: () => void; publish?: () => Promise<void>; remove?: () => Promise<void>; publicRemove?: (status: string) => Promise<void>; archived?: boolean; canPlan: boolean; ingredients: Record<string, Ingredient>; unitSystem: UnitSystem
+function RecipeDetail({ recipe, privateRecipe, date, state, save, close, busy, edit, copy, publish, remove, publicRemove, archived, canPlan, ingredients, unitSystem }: {
+  privateRecipe?: boolean; recipe: Recipe; date?: string; state: State; save: (action: Action) => Promise<boolean>; close: () => void; busy: boolean; edit?: () => void; copy?: () => void; publish?: () => Promise<void>; remove?: () => Promise<void>; publicRemove?: (status: string) => Promise<void>; archived?: boolean; canPlan: boolean; ingredients: Record<string, Ingredient>; unitSystem: UnitSystem
 }) {
   const [publicationMessage, setPublicationMessage] = useState('')
   const [publishing, setPublishing] = useState(false)
@@ -307,6 +371,7 @@ function RecipeDetail({ recipe, date, state, save, close, busy, edit, copy, publ
     </div>}
     {archived && <p className="alert">Dit recept is verborgen. Bewaar het als privérecept om het opnieuw in te plannen.</p>}
     <p className="recipe-meta"><Icon name="clock" size={16}/> {recipe.minutes} min <span>·</span> {recipe.cuisine}</p>
+    {(canPlan || archived) && <RecipeRating id={recipe.id} privateRecipe={privateRecipe} editable={canPlan} canVote={canPlan}/>}
     <Nutrition recipe={recipe}/>
     <p>{recipe.description}</p>
     {recipe.source === null && <p className="fine-print">Origineel recept</p>}
@@ -324,15 +389,16 @@ function RecipeDetail({ recipe, date, state, save, close, busy, edit, copy, publ
       </div>
     </div>
     <p className="print-portions">Voor {amount(scale, scale === 1 ? "portie" : "porties")}</p>
-    <h3>Ingrediënten</h3>
+    <div className="recipe-columns"><section className="recipe-ingredients"><h3>Ingrediënten</h3>
     <ul className="ingredients">{Object.entries(recipe.amounts).map(([id, base]) => <li key={id}><span>{ingredients[id].name}</span><strong>{ingredientAmount(base * scale, ingredients[id].unit, unitSystem)}</strong></li>)}</ul>
-    <div className="steps-heading">
+    </section><section className="recipe-preparation"><div className="steps-heading">
       <h3>Stap voor stap</h3>
       <button className="button" onClick={() => setCooking(0)}>Kookmodus</button>
     </div>
     <ol className="steps">{steps.map((step, index) => <li key={index}><div className="recipe-step-row"><span>{step}</span>
       <button className="icon-button" title={'Open stap ' + (index + 1) + ' in kookmodus'} aria-label={'Open stap ' + (index + 1) + ' in kookmodus'} onClick={() => setCooking(index)}><Icon name="book"/></button>
     </div></li>)}</ol>
+    </section></div>
     {cooking !== null && <CookingMode title={recipe.title} steps={steps} initialStep={cooking} close={() => setCooking(null)}/>}
 
     {publish && <div className="dialog-footer">
@@ -369,7 +435,7 @@ function RecipeDetail({ recipe, date, state, save, close, busy, edit, copy, publ
   </>
 }
 
-function RecipeCards({ recipes, onOpen, filters, onAdd }: { onAdd?: () => void; recipes: Recipe[]; onOpen: (recipe: Recipe) => void; filters?: { selected: string[]; setSelected: (tags: string[]) => void; reset: () => void } }) {
+function RecipeCards({ recipes, onOpen, filters, onAdd, privateRecipe }: { privateRecipe?: boolean; onAdd?: () => void; recipes: Recipe[]; onOpen: (recipe: Recipe) => void; filters?: { selected: string[]; setSelected: (tags: string[]) => void; reset: () => void } }) {
   const [search, setSearch] = useState('')
   const selected = filters?.selected ?? []
   const [filterOpen, setFilterOpen] = useState(false)
@@ -382,7 +448,7 @@ function RecipeCards({ recipes, onOpen, filters, onAdd }: { onAdd?: () => void; 
       </button>
     </div>}
     {filterOpen && filters && <RecipeFilters {...{ tagOptions, active }} setSelected={filters.setSelected} reset={filters.reset} count={visible.length} close={() => setFilterOpen(false)}/>}
-    <RecipeGrid recipes={visible} onOpen={onOpen} onAdd={onAdd}/>
+    <RecipeGrid recipes={visible} onOpen={onOpen} onAdd={onAdd} privateRecipe={privateRecipe}/>
   </>
 }
 
@@ -411,17 +477,17 @@ function RecipeFilters({ tagOptions, active, setSelected, count, close, reset, c
     </Dialog>
 }
 
-function RecipeGrid({ recipes, onOpen, disabled, onAdd, collectionBadge }: { collectionBadge?: (id: string) => ReactNode; onAdd?: () => void; recipes: Recipe[]; onOpen: (recipe: Recipe) => void; disabled?: boolean }) {
+function RecipeGrid({ recipes, onOpen, disabled, onAdd, collectionBadge, privateRecipe }: { privateRecipe?: boolean; collectionBadge?: (id: string) => ReactNode; onAdd?: () => void; recipes: Recipe[]; onOpen: (recipe: Recipe) => void; disabled?: boolean }) {
   return <>
     <div className="recipe-grid">
       {onAdd && <button type="button" className="recipe-card add-recipe-card" onClick={onAdd}>
         <div className="recipe-art add-recipe-art"><Icon name="plus" size={50}/></div>
         <div className="recipe-body"><h3>Recept toevoegen</h3><p>Maak een nieuw recept voor je privécollectie.</p></div>
       </button>}
-      {recipes.map(recipe => <button key={recipe.id} className="recipe-card" disabled={disabled} onClick={() => onOpen(recipe)}>
+      {recipes.map(recipe => <article key={recipe.id} className="recipe-card"><button type="button" className="recipe-open" disabled={disabled} onClick={() => onOpen(recipe)}>
         <div className="recipe-art"><RecipeArt recipe={recipe}/><span className="time-pill"><Icon name="clock" size={14}/>{recipe.minutes} min {collectionBadge?.(recipe.id)}</span></div>
         <div className="recipe-body"><small>{recipe.cuisine}</small><h3>{recipe.title}</h3><p>{recipe.subtitle}</p><Nutrition recipe={recipe}/><div className="tags"><>{[...recipe.tags.filter(isAllergyTag), ...recipe.tags.filter(tag => !isAllergyTag(tag)).slice(0, 2)].map(tag => <span className={isAllergyTag(tag) ? "allergy-tag" : undefined} key={tag}>{tag}</span>)}</><Icon name="arrow" size={18}/></div></div>
-      </button>)}
+      </button><RecipeRating id={recipe.id} privateRecipe={privateRecipe}/></article>)}
     </div>
     {!recipes.length && <p className="empty">Geen recepten gevonden.</p>}
   </>
@@ -773,7 +839,8 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
   const [savingPublic, setSavingPublic] = useState(false)
   const [publicRecipes, setPublicRecipes] = useState<Recipe[]>(starterRecipes)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const readPage = (): Tab => pageFromPath(window.location.pathname.replace(/\/$/, '') || '/')
+  const readPage = (): Tab => recipeIdFromPath(window.location.pathname) && window.history.state?.backgroundPage
+    ? pageFromPath(window.history.state.backgroundPage) : pageFromPath(window.location.pathname.replace(/\/$/, '') || '/')
   const [tab, setTab] = useState<Tab>(readPage)
   useEffect(() => {
     const url = new URL(window.location.href)
@@ -787,16 +854,16 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
       window.history.replaceState(null, '', url)
       setTab(readPage())
     }
-    const restorePage = () => { setTab(readPage()); setModal(undefined); setSettingsOpen(false); setProfileOpen(false); setAddPersonOpen(false) }
+    const restorePage = () => { setTab(readPage()); setModal(recipeFromLocation()); setSettingsOpen(false); setProfileOpen(false); setAddPersonOpen(false) }
     window.addEventListener('popstate', restorePage)
     return () => window.removeEventListener('popstate', restorePage)
   }, [])
   const [week, setWeek] = useState(() => weekStart(today()))
-  const [modal, setModal] = useState<Modal>()
+  const [modal, setModal] = useState<Modal | undefined>(recipeFromLocation)
   const [notice, setNotice] = useState('')
   const catalog = state ? householdRecipes(state) : {}
   const recipes = state ? Object.values(catalog).filter(recipe => canScheduleRecipe(state, recipe.id)) : []
-  const selectedRecipe = modal?.kind === 'recipe' ? modal.publicRecipe ?? catalog[modal.id] : undefined
+  const selectedRecipe = modal?.kind === 'recipe' ? modal.publicRecipe ?? catalog[modal.id] ?? publicRecipes.find(recipe => recipe.id === modal.id) : undefined
   const isPrivate = modal?.kind === 'recipe' && !modal.publicRecipe && Object.hasOwn(state?.recipeEdits ?? {}, modal.id)
   const archived = !!selectedRecipe && (modal?.kind === 'recipe' && modal.reviewStatus === 'archived' ||
     (!isPrivate && !!state?.archivedRecipeIds?.includes(selectedRecipe.id)))
@@ -843,19 +910,40 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
   const navigate = (id: Tab) => {
     const url = new URL(window.location.href)
     url.pathname = pagePaths[id]
-    url.searchParams.delete('page')
-    url.searchParams.delete('section')
+    for (const key of ['page', 'section', 'date', 'leftoverOf', 'view']) url.searchParams.delete(key)
     if (url.href !== window.location.href) window.history.pushState(null, '', url)
-    setTab(id); setNotice(''); window.scrollTo(0, 0) }
-  const openRecipe = (recipe: Recipe, date?: string) => setModal({ kind: 'recipe', id: recipe.id, date })
-  const openLeftover = (recipe: Recipe, date: string, leftoverOf: string) => setModal({ kind: 'recipe', id: recipe.id, date, leftoverOf })
-  const close = () => { setError(''); setModal(undefined) }
+    setModal(undefined); setTab(id); setNotice(''); window.scrollTo(0, 0) }
+  const showRecipe = (next: RecipeModal) => {
+    const url = new URL(window.location.href)
+    url.pathname = recipePath(next.id)
+    for (const key of ['page', 'section', 'date', 'leftoverOf', 'view']) url.searchParams.delete(key)
+    if (next.date) url.searchParams.set('date', next.date)
+    if (next.leftoverOf) url.searchParams.set('leftoverOf', next.leftoverOf)
+    if (next.desktopFullscreen) url.searchParams.set('view', 'fullscreen')
+    const sameRecipe = recipeIdFromPath(window.location.pathname) === next.id
+    const historyState = { recipeModal: next,
+      backgroundPage: window.history.state?.backgroundPage ?? (recipeIdFromPath(window.location.pathname) ? pagePaths[tab] : window.location.pathname),
+      recipeReturn: sameRecipe ? window.history.state?.recipeReturn : true }
+    window.history[sameRecipe ? 'replaceState' : 'pushState'](historyState, '', url)
+    setModal(next)
+  }
+  const openRecipe = (recipe: Recipe, date?: string) => showRecipe({ kind: 'recipe', id: recipe.id, date })
+  const openLeftover = (recipe: Recipe, date: string, leftoverOf: string) => showRecipe({ kind: 'recipe', id: recipe.id, date, leftoverOf })
+  const close = () => {
+    setError('')
+    if (recipeIdFromPath(window.location.pathname)) {
+      if (window.history.state?.recipeReturn) { window.history.back(); return }
+      window.history.replaceState(null, '', pagePaths.recepten)
+      setTab('recepten')
+    }
+    setModal(undefined)
+  }
   const openDay = (date: string) => setModal({ kind: 'day', date })
   const newRecipe = () => { setCatalogScope('private'); setModal({ kind: 'edit', isNew: true, recipe: {
     id: newId(), title: '', subtitle: '', cuisine: '', description: '', source: null, minutes: 30, tags: [], theme: 'green', amounts: {}, steps: [''],
   } }) }
 
-  return <>
+  return <RatingContext.Provider value={{ state, personId: account.personId, busy, save }}>
     <header className="site-header"><div className="header-inner">
       <button className="wordmark" aria-label="Aan tafel, naar weekplanning" onClick={() => navigate('planning')}><span className="brand-icon"><Icon name="leaf" size={23}/></span><span className="brand-name">Aan tafel<span className="brand-dot">.</span></span></button>
       <nav aria-label="Hoofdnavigatie">{tabs.map(item => <button key={item.id} className={tab === item.id ? 'nav-current' : ''}
@@ -922,8 +1010,8 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
           <button className={'button ' + (catalogScope === 'public' ? 'primary' : '')} aria-pressed={catalogScope === 'public'} onClick={() => setCatalogScope('public')}>Publieke recepten</button>
           <button className={'button ' + (catalogScope === 'private' ? 'primary' : '')} aria-pressed={catalogScope === 'private'} onClick={() => setCatalogScope('private')}>Privérecepten van je groep</button>
         </div>
-        <RecipeCards recipes={catalogScope === 'public' ? publicRecipes : Object.values(state.recipeEdits ?? {})}
-          onOpen={recipe => catalogScope === 'public' ? setModal({ kind: 'recipe', id: recipe.id, publicRecipe: recipe }) : openRecipe(recipe)} filters={recipeFilters} onAdd={catalogScope === "private" ? newRecipe : undefined}/>
+        <RecipeCards privateRecipe={catalogScope === 'private'} recipes={catalogScope === 'public' ? publicRecipes : Object.values(state.recipeEdits ?? {})}
+          onOpen={recipe => catalogScope === 'public' ? showRecipe({ kind: 'recipe', id: recipe.id, publicRecipe: recipe }) : openRecipe(recipe)} filters={recipeFilters} onAdd={catalogScope === "private" ? newRecipe : undefined}/>
       </>}
       {state && tab === 'boodschappen' && <Shopping unitSystem={unitSystem} state={state} save={save} busy={busy}/>}
       {state && tab === 'huisgenoten' && <>
@@ -957,7 +1045,7 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
         </section>
         <RecipeImport key={account.groupId}/>
       </>}
-      {tab === 'beheer' && account.superuser && <AdminPage revision={adminRevision} accountId={account.id} groupId={account.groupId} openRecipe={(review, status) => setModal({
+      {tab === 'beheer' && account.superuser && <AdminPage revision={adminRevision} accountId={account.id} groupId={account.groupId} openRecipe={(review, status) => showRecipe({
         kind: 'recipe', id: review.recipe.id, publicRecipe: review.recipe, reviewIngredients: review.ingredients, reviewStatus: status,
       })}/>}
     </main>
@@ -982,8 +1070,9 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
     </footer>
     {profileOpen && state && <Profile diet={diet} setDiet={setDiet} unitSystem={unitSystem} setUnitSystem={setUnitSystem} account={account} person={state.people.find(person => person.id === account.personId)} close={() => setProfileOpen(false)}/>}
     {settingsOpen && <Settings busy={busy} error={error} restore={restore} clearDatabase={() => save({ type: 'clearDatabase' })} close={() => { setError(''); setSettingsOpen(false) }}/>}
-    {state && modal && <Dialog key={modal.kind} printable={modal.kind === "recipe" && !modal.leftoverOf} fullscreen={modal.kind === "edit" || modal.kind === "day" || (modal.kind === "recipe" && !!modal.leftoverOf)} title={modal.kind === 'recipe' ? selectedRecipe?.title ?? 'Recept' : modal.kind === 'edit' ? (modal.isNew ? 'Recept toevoegen' : 'Recept aanpassen') : formatLong(modal.date)} close={close}>
+    {state && modal && <Dialog key={modal.kind} desktopFullscreen={modal.kind === 'recipe' && modal.desktopFullscreen} toggleFullscreen={modal.kind === 'recipe' && !modal.leftoverOf ? () => showRecipe({ ...modal, desktopFullscreen: !modal.desktopFullscreen }) : undefined} printable={modal.kind === "recipe" && !modal.leftoverOf} fullscreen={modal.kind === "edit" || modal.kind === "day" || (modal.kind === "recipe" && !!modal.leftoverOf)} title={modal.kind === 'recipe' ? selectedRecipe?.title ?? 'Recept' : modal.kind === 'edit' ? (modal.isNew ? 'Recept toevoegen' : 'Recept aanpassen') : formatLong(modal.date)} close={close}>
       {error && <p className="alert" role="alert">{error}</p>}
+      {modal.kind === 'recipe' && !selectedRecipe && <p role="status">Dit recept is niet beschikbaar of je hebt er geen toegang toe.</p>}
       {modal.kind === 'recipe' && modal.leftoverOf && selectedRecipe && <>
         <RecipeArt recipe={selectedRecipe}/>
         <p className="recipe-meta">{selectedRecipe.cuisine}</p>
@@ -992,7 +1081,7 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
         <div className="tags">{selectedRecipe.tags.map(tag => <span className={isAllergyTag(tag) ? 'allergy-tag' : undefined} key={tag}>{tag}</span>)}</div>
         <div className="leftover-reference"><strong>Kliek · Opwarmen</strong><p>Warm het gerecht van {formatLong(modal.leftoverOf)} op.</p><button className="button primary" onClick={() => openRecipe(selectedRecipe, modal.leftoverOf)}><Icon name="book"/> Open origineel recept</button></div>
       </>}
-      {modal.kind === 'recipe' && !modal.leftoverOf && selectedRecipe && <RecipeDetail key={selectedRecipe.id} recipe={selectedRecipe} unitSystem={unitSystem} ingredients={modal.reviewIngredients ?? (modal.publicRecipe ? Object.fromEntries(publicTerms.ingredients.map(item => [item.id, item])) : householdIngredients(state))}
+      {modal.kind === 'recipe' && !modal.leftoverOf && selectedRecipe && <RecipeDetail key={selectedRecipe.id} privateRecipe={isPrivate} recipe={selectedRecipe} unitSystem={unitSystem} ingredients={modal.reviewIngredients ?? ((modal.publicRecipe || !catalog[modal.id]) ? Object.fromEntries(publicTerms.ingredients.map(item => [item.id, item])) : householdIngredients(state))}
         archived={archived} canPlan={isPrivate || isPublished} date={modal.date} state={state} save={save} close={close} busy={busy || savingPublic}
         publicRemove={account.superuser && (isPublished || archived) ? async status => {
           setSavingPublic(true)
@@ -1013,13 +1102,13 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
           const copyId = newId()
           if (await save({ type: 'copyPublicRecipe', id: selectedRecipe.id, copyId })) {
             setCatalogScope('private')
-            setModal({ kind: 'recipe', id: copyId })
+            showRecipe({ kind: 'recipe', id: copyId })
           }
         } : undefined}/>}
       {modal.kind === 'edit' && <RecipeEditor publicTerms={publicTerms} privateTerms={modal.publicEdit ? emptyTerms : privateTerms} publicOnly={modal.publicEdit} recipe={modal.recipe} busy={busy || savingPublic} cancel={() => {
         setError('')
         if (modal.isNew) close()
-        else if (modal.publicEdit) setModal({ kind: 'recipe', id: modal.recipe.id, publicRecipe: modal.recipe })
+        else if (modal.publicEdit) showRecipe({ kind: 'recipe', id: modal.recipe.id, publicRecipe: modal.recipe })
         else openRecipe(modal.recipe, modal.date)
       }} onSave={async (recipe, terms) => {
         if (modal.publicEdit) {
@@ -1031,7 +1120,7 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
             if (catalogResponse.ok) setPublishedTerms((await catalogResponse.json()).terms ?? emptyTerms)
             setPublicRecipes(current => current.map(item => item.id === recipe.id ? recipe : item))
             if (tab === 'beheer') setAdminRevision(value => value + 1)
-            setModal({ kind: 'recipe', id: recipe.id, publicRecipe: recipe })
+            showRecipe({ kind: 'recipe', id: recipe.id, publicRecipe: recipe })
           } catch (failure) {
             setError(failure instanceof Error ? failure.message : 'Opslaan is niet gelukt.')
           } finally { setSavingPublic(false) }
@@ -1062,7 +1151,7 @@ function App({ account, onExpired }: { account: Account; onExpired: () => void }
         <div className="day-done"><button className="button primary" disabled={busy} onClick={async () => { if (!dayBeforeDone.current || await dayBeforeDone.current()) close() }}>Klaar <Icon name="check" size={17}/></button></div>
       </div>}
     </Dialog>}
-  </>
+  </RatingContext.Provider>
 }
 
 function Root() {
